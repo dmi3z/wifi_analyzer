@@ -6,6 +6,7 @@ const PORT = 3000;
 
 app.get("/wifi", (req, res) => {
   const WIFI_INTERFACE = req.query.wlan || "wlan0";
+  console.log(WIFI_INTERFACE);
   exec(`sudo iw dev ${WIFI_INTERFACE} scan`, (error, stdout, stderr) => {
     if (error) {
       console.error(error);
