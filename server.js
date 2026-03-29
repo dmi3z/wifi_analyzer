@@ -65,12 +65,19 @@ function parseIwScan(data) {
     } else if (line.startsWith("signal:")) {
       current.signal = line.slice(7).trim();
     } else if (line.startsWith("flags:")) {
-      current.flags = line.slice(6).trim().split(" ");
+      current.flags = line
+        .slice(6)
+        .trim()
+        .split(/\s+/)
+        .filter((f) => f.length > 0);
+      if (current.flags.some((f) => /WPA|WEP|RSN/.test(f))) {
+        current.encryption = true;
+      }
     } else if (line.startsWith("supported rates:")) {
       const rates = line
         .slice(16)
         .trim()
-        .split(" ")
+        .split(/\s+/)
         .map((r) => r.replace(/[.+*]/g, ""));
       current.rates.push(...rates);
     } else if (line.startsWith("RSN:") || line.includes("WPA")) {
