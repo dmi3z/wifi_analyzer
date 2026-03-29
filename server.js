@@ -53,6 +53,7 @@ function parseIwScan(data) {
         flags: [],
         rates: [],
         encryption: false,
+        is5G: false,
       };
     } else if (!current) {
       return;
@@ -75,6 +76,7 @@ function parseIwScan(data) {
     } else if (line.startsWith("RSN:") || line.includes("WPA")) {
       current.encryption = true;
     }
+    current.is5G = current.channel >= 36;
   });
 
   if (current) networks.push(current);
