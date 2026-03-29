@@ -3,9 +3,9 @@ const { exec } = require("child_process");
 
 const app = express();
 const PORT = 3000;
-const WIFI_INTERFACE = "wlan0";
 
 app.get("/wifi", (req, res) => {
+  const WIFI_INTERFACE = req.query.wlan || "wlan0";
   exec(`sudo iw dev ${WIFI_INTERFACE} scan`, (error, stdout, stderr) => {
     if (error) {
       console.error(error);
