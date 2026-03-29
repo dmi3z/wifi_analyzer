@@ -6,7 +6,6 @@ const PORT = 3000;
 const WIFI_INTERFACE = "wlan0";
 
 app.get("/wifi", (req, res) => {
-  // Сканируем Wi-Fi
   exec(`sudo iw dev ${WIFI_INTERFACE} scan`, (error, stdout, stderr) => {
     if (error) {
       console.error(error);
@@ -14,7 +13,10 @@ app.get("/wifi", (req, res) => {
     }
 
     const networks = parseIwScan(stdout);
-    res.json(networks);
+    const filteredNetworks = networks.filter(
+      (network) => network.bssid !== "Load:",
+    );
+    res.json(filteredNetworks);
   });
 });
 
