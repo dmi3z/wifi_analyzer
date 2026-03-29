@@ -1,8 +1,10 @@
 const express = require("express");
 const { exec } = require("child_process");
+const cors = require("cors");
 
 const app = express();
 const PORT = 3000;
+app.use(cors());
 
 app.get("/wifi", (req, res) => {
   const WIFI_INTERFACE = req.query.wlan || "wlan0";
