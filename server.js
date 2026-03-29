@@ -6,7 +6,6 @@ const PORT = 3000;
 
 app.get("/wifi", (req, res) => {
   const WIFI_INTERFACE = req.query.wlan || "wlan0";
-  console.log(WIFI_INTERFACE);
   exec(`sudo iw dev ${WIFI_INTERFACE} scan`, (error, stdout, stderr) => {
     if (error) {
       console.error(error);
@@ -44,7 +43,7 @@ function parseIwScan(data) {
 
     if (line.startsWith("BSS ")) {
       if (current) networks.push(current);
-      const bssid = line.split(" ")[1];
+      const bssid = line.split(" ")[1].split("(")[0].trim();
       current = {
         bssid,
         ssid: "",
