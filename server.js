@@ -15,7 +15,7 @@ const PORT = 3000;
 let currentTarget = {
   bssid: null,
   channel: null,
-  iface: "wlan2"
+  iface: "wlan2",
 };
 
 let tsharkProcess = null;
@@ -23,7 +23,7 @@ let tsharkProcess = null;
 let stats = {
   totalPackets: 0,
   handshakeCount: 0,
-  clients: new Set()
+  clients: new Set(),
 };
 
 // ==========================
@@ -33,7 +33,7 @@ function resetStats() {
   stats = {
     totalPackets: 0,
     handshakeCount: 0,
-    clients: new Set()
+    clients: new Set(),
   };
 }
 
@@ -62,15 +62,18 @@ function startTshark(bssid, channel, iface) {
 
   tsharkProcess = spawn("sudo", [
     "tshark",
-    "-i", iface,
-    "-Y", `wlan.bssid == ${bssid}`,
-    "-T", "json"
+    "-i",
+    iface,
+    "-Y",
+    `wlan.bssid == ${bssid}`,
+    "-T",
+    "json",
   ]);
 
   tsharkProcess.stdout.on("data", (data) => {
     try {
       const packets = JSON.parse(data.toString());
-      packets.forEach(pkt => {
+      packets.forEach((pkt) => {
         stats.totalPackets++;
         if (pkt._source?.layers?.eapol) stats.handshakeCount++;
         const src = pkt._source?.layers?.["wlan.sa"];
@@ -126,6 +129,20 @@ app.post("/mode/monitor", (req, res) => {
   }
 });
 
+app.get("/wlanconnection", (req, res) => {
+  try {
+    const output = execSync("iwconfig wlan0").toString();
+    const interfaces = output
+      .split("\n")
+      .map((i) => i.trim())
+      .filter((i) => i.length > 0);
+    res.json(interfaces);
+  } catch (err) {
+    console.error("Failed to check Wi-Fi connection");
+    res.status(500).json({ error: "Failed to check Wi-Fi connection" });
+  }
+});
+
 // Switch back to managed mode
 app.post("/mode/managed", (req, res) => {
   const iface = req.body.iface || "wlan2";
@@ -144,14 +161,15 @@ app.post("/mode/managed", (req, res) => {
 // Set target BSSID and channel
 app.post("/target", (req, res) => {
   const { bssid, channel, iface } = req.body;
-  if (!bssid || !channel) return res.status(400).json({ error: "bssid and channel are required" });
+  if (!bssid || !channel)
+    return res.status(400).json({ error: "bssid and channel are required" });
 
   const newIface = iface || currentTarget.iface;
 
   currentTarget = {
     bssid: bssid.toUpperCase(),
     channel,
-    iface: newIface
+    iface: newIface,
   };
 
   ensureMonitorMode(newIface);
@@ -166,15 +184,17 @@ app.get("/stream", (req, res) => {
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
-    Connection: "keep-alive"
+    Connection: "keep-alive",
   });
 
   const interval = setInterval(() => {
-    res.write(`data: ${JSON.stringify({
-      ...stats,
-      clients: Array.from(stats.clients),
-      target: currentTarget
-    })}\n\n`);
+    res.write(
+      `data: ${JSON.stringify({
+        ...stats,
+        clients: Array.from(stats.clients),
+        target: currentTarget,
+      })}\n\n`,
+    );
   }, 1000);
 
   req.on("close", () => {
@@ -186,8 +206,13 @@ app.get("/stream", (req, res) => {
 // Get list of Wi-Fi interfaces
 app.get("/wlan", (req, res) => {
   try {
-    const output = execSync("iw dev | grep Interface | awk '{print $2}'").toString();
-    const interfaces = output.split("\n").map(i => i.trim()).filter(i => i.length > 0);
+    const output = execSync(
+      "iw dev | grep Interface | awk '{print $2}'",
+    ).toString();
+    const interfaces = output
+      .split("\n")
+      .map((i) => i.trim())
+      .filter((i) => i.length > 0);
     res.json(interfaces);
   } catch (err) {
     console.error("Failed to get Wi-Fi interfaces");
@@ -199,7 +224,6 @@ app.get("/wlan", (req, res) => {
 // Wi-Fi scan endpoint (original version, unchanged)
 // ==========================
 const expressExec = require("child_process").exec;
-
 
 app.get("/wifi", (req, res) => {
   const WIFI_INTERFACE = req.query.wlan || "wlan1";
@@ -215,7 +239,7 @@ app.get("/wifi", (req, res) => {
     let current = null;
     let inRSN = false;
 
-    lines.forEach(line => {
+    lines.forEach((line) => {
       const trimmed = line.trim();
 
       if (trimmed.startsWith("BSS ")) {
@@ -243,15 +267,13 @@ app.get("/wifi", (req, res) => {
           hasWPA: false,
           hasWEP: false,
           rates: [],
-          is5G: false
+          is5G: false,
         };
         inRSN = false;
-
       } else if (!current) return;
-
       // SSID
-      else if (trimmed.startsWith("SSID:")) current.ssid = trimmed.slice(5).trim();
-
+      else if (trimmed.startsWith("SSID:"))
+        current.ssid = trimmed.slice(5).trim();
       // Частота и канал
       else if (trimmed.startsWith("freq:")) {
         current.frequency = trimmed.slice(5).trim();
@@ -260,28 +282,27 @@ app.get("/wifi", (req, res) => {
       }
 
       // Сила сигнала
-      else if (trimmed.startsWith("signal:")) current.signal = trimmed.slice(7).trim();
-
+      else if (trimmed.startsWith("signal:"))
+        current.signal = trimmed.slice(7).trim();
       // Поддерживаем блок RSN (WPA2)
       else if (trimmed.includes("RSN:")) inRSN = true;
       else if (inRSN) {
-        if (trimmed.includes("PSK") || trimmed.includes("CCMP")) current.hasWPA2 = true;
+        if (trimmed.includes("PSK") || trimmed.includes("CCMP"))
+          current.hasWPA2 = true;
         if (trimmed === "") inRSN = false; // пустая строка — конец блока
       }
 
       // WPA (WPA1)
       else if (trimmed.includes("WPA Version")) current.hasWPA = true;
-
       // WEP
       else if (trimmed.includes("WEP")) current.hasWEP = true;
-
       // Поддерживаемые скорости
       else if (trimmed.startsWith("supported rates:")) {
         const rates = trimmed
           .slice(16)
           .trim()
           .split(/\s+/)
-          .map(r => r.replace(/[.+*]/g, ""));
+          .map((r) => r.replace(/[.+*]/g, ""));
         current.rates.push(...rates);
       }
     });
@@ -298,12 +319,12 @@ app.get("/wifi", (req, res) => {
     }
 
     // Фильтруем пустые SSID
-    const filteredNetworks = networks.filter(net => net.bssid && net.ssid !== "");
+    const filteredNetworks = networks.filter(
+      (net) => net.bssid && net.ssid !== "",
+    );
     res.json(filteredNetworks);
   });
 });
-
-
 
 // ==========================
 // Start server
