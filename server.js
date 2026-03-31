@@ -400,6 +400,14 @@ function broadcast(event, data) {
 }
 
 // --- BLE SCAN ---
+app.post("/bluetooth/off", (req, res) => {
+  exec("sudo rfkill block bluetooth", () => res.json({ status: "off" }));
+});
+
+app.post("/bluetooth/on", (req, res) => {
+  exec("sudo rfkill unblock bluetooth", () => res.json({ status: "on" }));
+});
+
 noble.on("stateChange", (state) => {
   if (state === "poweredOn") noble.startScanning([], true);
   else noble.stopScanning();
