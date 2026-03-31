@@ -2,12 +2,165 @@
 const express = require("express");
 const cors = require("cors");
 const { spawn, exec, execSync } = require("child_process");
+const MacLookup = require("mac-lookup");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const PORT = 3000;
+
+// MAC lookup с кешем для ускорения
+const mac = new MacLookup({ cacheSize: 1000 });
+const macCache = {};
+async function lookupMac(bssid) {
+  if (!bssid) return "unknown";
+  if (!macCache[bssid]) {
+    try {
+      macCache[bssid] = await mac.lookup(bssid);
+    } catch {
+      macCache[bssid] = "unknown";
+    }
+  }
+  return macCache[bssid];
+}
+
+// --- Вспомогательные функции ---
+function signalQuality(dbm) {
+  if (dbm >= -60) return "excellent";
+  if (dbm >= -70) return "good";
+  if (dbm >= -80) return "fair";
+  return "poor";
+}
+
+function getBand(freq) {
+  return freq < 3000 ? "2.4GHz" : "5GHz";
+}
+
+function getOverlappingChannels(channel) {
+  const overlaps = [];
+  for (let i = channel - 4; i <= channel + 4; i++) {
+    if (i >= 1 && i <= 13 && i !== channel) overlaps.push(i);
+  }
+  return overlaps;
+}
+
+function parseSecurity(text) {
+  const hasWPA = /WPA:\s+\* Version: 1/.test(text);
+  const hasRSN = /RSN:/.test(text);
+  const hasTKIP = /TKIP/.test(text);
+  const hasCCMP = /CCMP/.test(text);
+  const wps = /WPS:/.test(text);
+
+  let issues = [];
+  let score = 10;
+
+  if (hasWPA) {
+    issues.push("WPA1 enabled");
+    score -= 3;
+  }
+  if (hasTKIP) {
+    issues.push("TKIP cipher in use");
+    score -= 3;
+  }
+  if (wps) {
+    issues.push("WPS enabled");
+    score -= 2;
+  }
+
+  return {
+    auth: [hasWPA ? "WPA-PSK" : null, hasRSN ? "WPA2-PSK" : null].filter(
+      Boolean,
+    ),
+    pairwise_ciphers: [hasCCMP ? "CCMP" : null, hasTKIP ? "TKIP" : null].filter(
+      Boolean,
+    ),
+    group_cipher: hasTKIP ? "TKIP" : "CCMP",
+    wps,
+    security_level: score >= 7 ? "good" : score >= 5 ? "medium" : "weak",
+    score,
+    issues,
+  };
+}
+
+function computeOverall({
+  signalDbm,
+  securityScore,
+  utilization,
+  interferenceScore,
+}) {
+  const signalScore =
+    signalDbm >= -60 ? 10 : signalDbm >= -70 ? 8 : signalDbm >= -80 ? 6 : 3;
+
+  const loadScore = utilization < 30 ? 10 : utilization < 70 ? 7 : 4;
+
+  return (
+    signalScore * 0.3 +
+    securityScore * 0.4 +
+    loadScore * 0.2 +
+    interferenceScore * 0.1
+  ).toFixed(1);
+}
+
+async function parseNetworkBlock(block, allChannels) {
+  const ssid = (block.match(/SSID: (.+)/) || [])[1];
+  const bssid = (block.match(/BSS ([0-9a-f:]+)/) || [])[1];
+  const freq = parseInt((block.match(/freq: (\d+)/) || [])[1]);
+  const signalDbm = parseFloat((block.match(/signal: (-\d+\.\d+)/) || [])[1]);
+  const channel = parseInt((block.match(/channel (\d+)/) || [])[1]);
+  const utilizationRaw = parseInt(
+    (block.match(/channel utilisation: (\d+)/) || [])[1] || 0,
+  );
+  const utilization = Math.round((utilizationRaw / 255) * 100);
+
+  const security = parseSecurity(block);
+  const manufacturer = await lookupMac(bssid);
+
+  // Interference
+  const overlappingChannels = getOverlappingChannels(channel);
+  const overlappingNetworks = allChannels.filter((n) =>
+    overlappingChannels.includes(n.channel),
+  ).length;
+  const interferenceLevel =
+    overlappingNetworks === 0
+      ? "low"
+      : overlappingNetworks < 3
+        ? "medium"
+        : "high";
+  const interferenceScore =
+    interferenceLevel === "low" ? 10 : interferenceLevel === "medium" ? 6 : 3;
+
+  const overallScore = computeOverall({
+    signalDbm,
+    securityScore: security.score,
+    utilization,
+    interferenceScore,
+  });
+
+  return {
+    identity: {
+      ssid,
+      bssid,
+      manufacturer,
+    },
+    radio: {
+      band: getBand(freq),
+      frequency_mhz: freq,
+      channel,
+      signal_dbm: signalDbm,
+      signal_quality: signalQuality(signalDbm),
+    },
+    security,
+    load: {
+      channel_utilization_percent: utilization,
+    },
+    interference: {
+      overlapping_networks: overlappingNetworks,
+      interference_level: interferenceLevel,
+    },
+    overall_score: Number(overallScore),
+  };
+}
 
 // ==========================
 // Global variables
@@ -44,17 +197,7 @@ function stopTshark() {
     tsharkProcess = null;
   }
 }
-function freqToChannel(freq) {
-  freq = parseInt(freq, 10);
-  if (freq >= 2412 && freq <= 2472) {
-    return Math.floor((freq - 2407) / 5); // 2.4 GHz
-  } else if (freq === 2484) {
-    return 14;
-  } else if (freq >= 5180 && freq <= 5825) {
-    return Math.floor((freq - 5000) / 5); // 5 GHz
-  }
-  return null;
-}
+
 function startTshark(bssid, channel, iface) {
   console.log(`Starting capture for ${bssid} on channel ${channel}`);
   execSync(`sudo iw dev ${iface} set channel ${channel}`);
@@ -223,106 +366,24 @@ app.get("/wlan", (req, res) => {
 // ==========================
 // Wi-Fi scan endpoint (original version, unchanged)
 // ==========================
-const expressExec = require("child_process").exec;
+app.get("/wifi", async (req, res) => {
+  exec("sudo iw dev wlan1 scan", async (err, stdout) => {
+    if (err) return res.status(500).json({ error: err.message });
 
-app.get("/wifi", (req, res) => {
-  const WIFI_INTERFACE = req.query.wlan || "wlan1";
+    const networkBlocks = stdout
+      .split(/\nBSS /)
+      .map((b, i) => (i === 0 ? b : "BSS " + b));
+    const allChannels = networkBlocks.map((b) => ({
+      channel: parseInt((b.match(/channel (\d+)/) || [])[1]),
+    }));
 
-  exec(`sudo iw dev ${WIFI_INTERFACE} scan`, (error, stdout, stderr) => {
-    if (error) {
-      console.error(error);
-      return res.status(500).json({ error: "Scan failed", details: stderr });
+    const results = [];
+    for (const block of networkBlocks) {
+      const info = await parseNetworkBlock(block, allChannels);
+      results.push(info);
     }
 
-    const lines = stdout.split("\n");
-    const networks = [];
-    let current = null;
-    let inRSN = false;
-
-    lines.forEach((line) => {
-      const trimmed = line.trim();
-
-      if (trimmed.startsWith("BSS ")) {
-        if (current) {
-          // Определяем финальный encryption перед добавлением
-          if (current.hasWPA3) current.encryption = "WPA3";
-          else if (current.hasWPA2) current.encryption = "WPA2";
-          else if (current.hasWPA) current.encryption = "WPA";
-          else if (current.hasWEP) current.encryption = "WEP";
-          else current.encryption = "opened";
-
-          networks.push(current);
-        }
-
-        const bssid = trimmed.split(" ")[1].split("(")[0].trim();
-        current = {
-          bssid,
-          ssid: "",
-          frequency: "",
-          channel: null,
-          signal: "",
-          encryption: "opened",
-          hasWPA3: false,
-          hasWPA2: false,
-          hasWPA: false,
-          hasWEP: false,
-          rates: [],
-          is5G: false,
-        };
-        inRSN = false;
-      } else if (!current) return;
-      // SSID
-      else if (trimmed.startsWith("SSID:"))
-        current.ssid = trimmed.slice(5).trim();
-      // Частота и канал
-      else if (trimmed.startsWith("freq:")) {
-        current.frequency = trimmed.slice(5).trim();
-        current.channel = freqToChannel(current.frequency);
-        current.is5G = current.channel >= 36;
-      }
-
-      // Сила сигнала
-      else if (trimmed.startsWith("signal:"))
-        current.signal = trimmed.slice(7).trim();
-      // Поддерживаем блок RSN (WPA2)
-      else if (trimmed.includes("RSN:")) inRSN = true;
-      else if (inRSN) {
-        if (trimmed.includes("PSK") || trimmed.includes("CCMP"))
-          current.hasWPA2 = true;
-        if (trimmed === "") inRSN = false; // пустая строка — конец блока
-      }
-
-      // WPA (WPA1)
-      else if (trimmed.includes("WPA Version")) current.hasWPA = true;
-      // WEP
-      else if (trimmed.includes("WEP")) current.hasWEP = true;
-      // Поддерживаемые скорости
-      else if (trimmed.startsWith("supported rates:")) {
-        const rates = trimmed
-          .slice(16)
-          .trim()
-          .split(/\s+/)
-          .map((r) => r.replace(/[.+*]/g, ""));
-        current.rates.push(...rates);
-      }
-    });
-
-    // Финальный текущий BSS
-    if (current) {
-      if (current.hasWPA3) current.encryption = "WPA3";
-      else if (current.hasWPA2) current.encryption = "WPA2";
-      else if (current.hasWPA) current.encryption = "WPA";
-      else if (current.hasWEP) current.encryption = "WEP";
-      else current.encryption = "opened";
-
-      networks.push(current);
-    }
-
-    // Фильтруем пустые SSID
-    const filteredNetworks = networks.filter(
-      (net) => net.bssid && net.ssid !== "",
-    );
-    res.json(filteredNetworks);
+    res.json(results);
   });
 });
 
