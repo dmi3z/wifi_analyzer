@@ -2,7 +2,7 @@
 const express = require("express");
 const cors = require("cors");
 const { spawn, exec, execSync } = require("child_process");
-const MacLookup = require("mac-lookup");
+const fs = require("fs");
 
 const app = express();
 app.use(cors());
@@ -10,31 +10,19 @@ app.use(express.json());
 
 const PORT = 3000;
 
-// MAC lookup с кешем для ускорения
-async function lookupMac(bssid) {
-  if (!bssid) return "unknown";
+const ouiText = fs.readFileSync("oui.txt", "utf8");
+const ouiMap = {};
 
-  if (macCache[bssid]) return macCache[bssid];
+ouiText.split("\n").forEach((line) => {
+  const m = line.match(
+    /^([0-9A-F]{2}-[0-9A-F]{2}-[0-9A-F]{2})\s+\(hex\)\s+(.+)/i,
+  );
+  if (m) ouiMap[m[1].toLowerCase().replace(/-/g, ":")] = m[2].trim();
+});
 
-  try {
-    // macLookup возвращает строку или null
-    const vendor = await MacLookup(bssid);
-    macCache[bssid] = vendor || "unknown";
-    return macCache[bssid];
-  } catch (err) {
-    macCache[bssid] = "unknown";
-    return "unknown";
-  }
-}
-
-const macCache = {};
-
-async function lookupMacCached(bssid) {
-  if (!bssid) return "unknown";
-  if (!macCache[bssid]) {
-    macCache[bssid] = await lookupMac(bssid);
-  }
-  return macCache[bssid];
+function lookupMacLocal(bssid) {
+  const prefix = bssid.toLowerCase().split(":").slice(0, 3).join(":");
+  return ouiMap[prefix] || "unknown";
 }
 
 // --- Вспомогательные функции ---
@@ -158,7 +146,7 @@ async function parseNetworkBlock(block, allChannels) {
   const utilization = Math.round((utilizationRaw / 255) * 100);
 
   const security = parseSecurity(block);
-  const manufacturer = await lookupMac("c4:b8:b4:33:25:e4");
+  const manufacturer = lookupMacLocal(blockBSSID);
 
   // Interference
   const overlappingChannels = getOverlappingChannels(channel);
