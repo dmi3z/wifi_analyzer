@@ -288,6 +288,93 @@ function ensureMonitorMode(iface) {
   }
 }
 
+//// BLE functions
+
+function parseManufacturerData(buf) {
+  if (!buf) return null;
+
+  const hex = buf.toString("hex");
+
+  // Apple (iBeacon)
+  if (hex.startsWith("4c00")) {
+    return parseIBeacon(buf);
+  }
+
+  // Google (Eddystone)
+  if (hex.startsWith("aa")) {
+    return parseEddystone(buf);
+  }
+
+  return {
+    raw: hex,
+  };
+}
+
+function parseIBeacon(buf) {
+  // iBeacon format:
+  // 4c00 02 15 UUID(16) major(2) minor(2) txPower(1)
+
+  if (buf.length < 25) return null;
+
+  const uuid = buf.slice(4, 20).toString("hex");
+  const major = buf.readUInt16BE(20);
+  const minor = buf.readUInt16BE(22);
+  const txPower = buf.readInt8(24);
+
+  return {
+    type: "ibeacon",
+    uuid,
+    major,
+    minor,
+    txPower,
+  };
+}
+
+function parseEddystone(buf) {
+  const frameType = buf[2];
+
+  if (frameType === 0x00) {
+    // UID
+    return {
+      type: "eddystone_uid",
+    };
+  }
+
+  if (frameType === 0x10) {
+    // URL
+    return {
+      type: "eddystone_url",
+    };
+  }
+
+  return {
+    type: "eddystone_unknown",
+  };
+}
+
+function detectDevice(p) {
+  const name = p.advertisement.localName || "";
+  const mfg = p.advertisement.manufacturerData;
+
+  if (name.includes("AirPods")) {
+    return { type: "audio", vendor: "Apple" };
+  }
+
+  if (mfg) {
+    const hex = mfg.toString("hex");
+
+    if (hex.startsWith("4c00")) {
+      return { type: "apple_device", vendor: "Apple" };
+    }
+
+    if (hex.startsWith("6f")) {
+      return { type: "xiaomi", vendor: "Xiaomi" };
+    }
+  }
+
+  return { type: "unknown", vendor: "unknown" };
+}
+
 // ==========================
 // Endpoints
 // ==========================
@@ -324,22 +411,34 @@ noble.on("discover", (p) => {
   const rssi = p.rssi;
   const now = Date.now();
 
+  const mfgParsed = parseManufacturerData(p.advertisement.manufacturerData);
+  const detected = detectDevice(p);
+
   if (!devices[mac]) {
-    devices[mac] = { mac, name, rssi, first_seen: now };
+    devices[mac] = {
+      mac,
+      name,
+      rssi,
+      first_seen: now,
+    };
   }
 
-  devices[mac].rssi = rssi;
-  devices[mac].last_seen = now;
+  devices[mac] = {
+    ...devices[mac],
+    name,
+    rssi,
+    last_seen: now,
+    manufacturer: mfgParsed,
+    ...detected,
+  };
 
-  // history (ограничим до 100 записей)
   history.push({
     mac,
-    name,
     rssi,
     ts: now,
   });
 
-  if (history.length > 100) history.shift();
+  if (history.length > 1000) history.shift();
 
   broadcast("device", devices[mac]);
 });
