@@ -11,16 +11,21 @@ app.use(express.json());
 const PORT = 3000;
 
 // MAC lookup с кешем для ускорения
-const mac = new MacLookup({ cacheSize: 1000 });
-const macCache = {};
 async function lookupMac(bssid) {
+  try {
+    const vendor = await macLookup(bssid); // macLookup — async функция
+    return vendor || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+const macCache = {};
+
+async function lookupMacCached(bssid) {
   if (!bssid) return "unknown";
   if (!macCache[bssid]) {
-    try {
-      macCache[bssid] = await mac.lookup(bssid);
-    } catch {
-      macCache[bssid] = "unknown";
-    }
+    macCache[bssid] = await lookupMac(bssid);
   }
   return macCache[bssid];
 }
@@ -114,7 +119,7 @@ async function parseNetworkBlock(block, allChannels) {
   const utilization = Math.round((utilizationRaw / 255) * 100);
 
   const security = parseSecurity(block);
-  const manufacturer = await lookupMac(bssid);
+  const manufacturer = await lookupMacCached(bssid);
 
   // Interference
   const overlappingChannels = getOverlappingChannels(channel);
