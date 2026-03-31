@@ -18,7 +18,7 @@ async function lookupMac(bssid) {
 
   try {
     // macLookup возвращает строку или null
-    const vendor = await macLookup(bssid);
+    const vendor = await MacLookup(bssid);
     macCache[bssid] = vendor || "unknown";
     return macCache[bssid];
   } catch (err) {
