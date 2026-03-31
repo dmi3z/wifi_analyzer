@@ -2,6 +2,7 @@
 const express = require("express");
 const cors = require("cors");
 const { spawn, exec, execSync } = require("child_process");
+const noble = require("@abandonware/noble");
 const fs = require("fs");
 
 const app = express();
@@ -12,6 +13,8 @@ const PORT = 3000;
 
 const ouiText = fs.readFileSync("oui.txt", "utf8");
 const ouiMap = {};
+let devices = {};
+let clients = [];
 
 ouiText.split("\n").forEach((line) => {
   const m = line.match(
@@ -287,6 +290,124 @@ function ensureMonitorMode(iface) {
 // ==========================
 // Endpoints
 // ==========================
+
+/////=== Bluetooth
+
+// --- SSE ---
+app.get("/events", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+
+  res.flushHeaders();
+
+  clients.push(res);
+
+  req.on("close", () => {
+    clients = clients.filter((c) => c !== res);
+  });
+});
+
+function broadcast(event, data) {
+  const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  clients.forEach((c) => c.write(payload));
+}
+
+// --- BLE SCAN ---
+noble.on("stateChange", (state) => {
+  if (state === "poweredOn") noble.startScanning([], true);
+  else noble.stopScanning();
+});
+
+noble.on("discover", (p) => {
+  const mac = p.address;
+  const name = p.advertisement.localName || "unknown";
+  const rssi = p.rssi;
+  const now = Date.now();
+
+  if (!devices[mac]) {
+    devices[mac] = { mac, name, rssi, first_seen: now };
+  }
+
+  devices[mac].rssi = rssi;
+  devices[mac].last_seen = now;
+
+  db.run(
+    `
+    INSERT INTO devices(mac, name, rssi, first_seen, last_seen)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(mac) DO UPDATE SET
+      rssi=excluded.rssi,
+      last_seen=excluded.last_seen
+  `,
+    [mac, name, rssi, devices[mac].first_seen, now],
+  );
+
+  broadcast("device", devices[mac]);
+});
+
+// --- API ---
+
+app.get("/devices", (req, res) => {
+  res.json(Object.values(devices));
+});
+
+app.get("/devices/:mac", (req, res) => {
+  res.json(devices[req.params.mac] || {});
+});
+
+app.get("/devices/top/:n", (req, res) => {
+  const n = parseInt(req.params.n);
+  const sorted = Object.values(devices)
+    .sort((a, b) => b.rssi - a.rssi)
+    .slice(0, n);
+  res.json(sorted);
+});
+
+app.get("/history", (req, res) => {
+  db.all(
+    `SELECT * FROM devices ORDER BY last_seen DESC LIMIT 100`,
+    [],
+    (err, rows) => {
+      res.json(rows);
+    },
+  );
+});
+
+app.delete("/devices", (req, res) => {
+  devices = {};
+  db.run(`DELETE FROM devices`);
+  res.json({ ok: true });
+});
+
+// --- BTMON ---
+let btmon = null;
+
+app.post("/btmon/start", (req, res) => {
+  if (btmon) return res.json({ status: "already running" });
+
+  btmon = spawn("btmon");
+
+  btmon.stdout.on("data", (data) => {
+    broadcast("btmon", data.toString());
+  });
+
+  btmon.on("close", () => {
+    btmon = null;
+  });
+
+  res.json({ status: "started" });
+});
+
+app.post("/btmon/stop", (req, res) => {
+  if (btmon) {
+    btmon.kill();
+    btmon = null;
+  }
+  res.json({ status: "stopped" });
+});
+
+//// === WIFI
 
 // Switch to monitor mode
 app.post("/mode/monitor", (req, res) => {
