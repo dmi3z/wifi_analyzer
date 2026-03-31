@@ -12,10 +12,17 @@ const PORT = 3000;
 
 // MAC lookup с кешем для ускорения
 async function lookupMac(bssid) {
+  if (!bssid) return "unknown";
+
+  if (macCache[bssid]) return macCache[bssid];
+
   try {
-    const vendor = await macLookup(bssid); // macLookup — async функция
-    return vendor || "unknown";
-  } catch {
+    // macLookup возвращает строку или null
+    const vendor = await macLookup(bssid);
+    macCache[bssid] = vendor || "unknown";
+    return macCache[bssid];
+  } catch (err) {
+    macCache[bssid] = "unknown";
     return "unknown";
   }
 }
@@ -53,35 +60,67 @@ function getOverlappingChannels(channel) {
 function parseSecurity(text) {
   const hasWPA = /WPA:\s+\* Version: 1/.test(text);
   const hasRSN = /RSN:/.test(text);
+  const hasWPA3 = /RSN:.*Suite: SAE/.test(text) || /WPA3/.test(text); // примерный поиск WPA3
   const hasTKIP = /TKIP/.test(text);
   const hasCCMP = /CCMP/.test(text);
   const wps = /WPS:/.test(text);
 
+  let auth = [];
+  let pairwise = [];
+  let group_cipher = null;
   let issues = [];
   let score = 10;
 
+  if (hasWPA3) {
+    auth.push("WPA3-SAE");
+    pairwise.push("CCMP");
+  }
+  if (hasRSN && !hasWPA3) {
+    auth.push("WPA2-PSK");
+    if (hasCCMP) pairwise.push("CCMP");
+    if (hasTKIP) pairwise.push("TKIP");
+    if (hasTKIP) group_cipher = "TKIP";
+    else group_cipher = "CCMP";
+  }
   if (hasWPA) {
+    auth.push("WPA-PSK");
+    if (hasCCMP) pairwise.push("CCMP");
+    if (hasTKIP) pairwise.push("TKIP");
     issues.push("WPA1 enabled");
     score -= 3;
+    if (hasTKIP) {
+      issues.push("TKIP cipher in use");
+      score -= 3;
+    }
   }
-  if (hasTKIP) {
-    issues.push("TKIP cipher in use");
-    score -= 3;
+
+  // Проверка открытой сети
+  const isOpen = /capability:.*Privacy/.test(text) === false;
+  if (isOpen) {
+    auth.push("OPEN");
+    score = Math.min(score, 2); // сильно снижает безопасность
+    issues.push("Open network");
   }
+
+  // Проверка WEP (устаревший)
+  const isWEP = /WEP/.test(text);
+  if (isWEP) {
+    auth.push("WEP");
+    score = Math.min(score, 3);
+    issues.push("WEP (insecure)");
+  }
+
+  // Проверка WPS
   if (wps) {
     issues.push("WPS enabled");
     score -= 2;
   }
 
   return {
-    auth: [hasWPA ? "WPA-PSK" : null, hasRSN ? "WPA2-PSK" : null].filter(
-      Boolean,
-    ),
-    pairwise_ciphers: [hasCCMP ? "CCMP" : null, hasTKIP ? "TKIP" : null].filter(
-      Boolean,
-    ),
-    group_cipher: hasTKIP ? "TKIP" : "CCMP",
-    wps,
+    auth,
+    pairwise_ciphers: pairwise,
+    group_cipher: group_cipher || pairwise[0] || null,
+    wps: !!wps,
     security_level: score >= 7 ? "good" : score >= 5 ? "medium" : "weak",
     score,
     issues,
@@ -119,7 +158,7 @@ async function parseNetworkBlock(block, allChannels) {
   const utilization = Math.round((utilizationRaw / 255) * 100);
 
   const security = parseSecurity(block);
-  const manufacturer = await lookupMacCached(bssid);
+  const manufacturer = await lookupMac(bssid);
 
   // Interference
   const overlappingChannels = getOverlappingChannels(channel);
