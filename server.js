@@ -14,6 +14,7 @@ const PORT = 3000;
 const ouiText = fs.readFileSync("oui.txt", "utf8");
 const ouiMap = {};
 let devices = {};
+let history = [];
 let clients = [];
 
 ouiText.split("\n").forEach((line) => {
@@ -293,12 +294,10 @@ function ensureMonitorMode(iface) {
 
 /////=== Bluetooth
 
-// --- SSE ---
 app.get("/events", (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
-
   res.flushHeaders();
 
   clients.push(res);
@@ -320,7 +319,7 @@ noble.on("stateChange", (state) => {
 });
 
 noble.on("discover", (p) => {
-  const mac = p.address;
+  const mac = p.address || "unknown";
   const name = p.advertisement.localName || "unknown";
   const rssi = p.rssi;
   const now = Date.now();
@@ -332,30 +331,32 @@ noble.on("discover", (p) => {
   devices[mac].rssi = rssi;
   devices[mac].last_seen = now;
 
-  db.run(
-    `
-    INSERT INTO devices(mac, name, rssi, first_seen, last_seen)
-    VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(mac) DO UPDATE SET
-      rssi=excluded.rssi,
-      last_seen=excluded.last_seen
-  `,
-    [mac, name, rssi, devices[mac].first_seen, now],
-  );
+  // history (ограничим до 100 записей)
+  history.push({
+    mac,
+    name,
+    rssi,
+    ts: now,
+  });
+
+  if (history.length > 100) history.shift();
 
   broadcast("device", devices[mac]);
 });
 
 // --- API ---
 
+// список текущих устройств
 app.get("/devices", (req, res) => {
   res.json(Object.values(devices));
 });
 
+// конкретное устройство
 app.get("/devices/:mac", (req, res) => {
   res.json(devices[req.params.mac] || {});
 });
 
+// топ по RSSI
 app.get("/devices/top/:n", (req, res) => {
   const n = parseInt(req.params.n);
   const sorted = Object.values(devices)
@@ -364,19 +365,15 @@ app.get("/devices/top/:n", (req, res) => {
   res.json(sorted);
 });
 
+// история (из RAM)
 app.get("/history", (req, res) => {
-  db.all(
-    `SELECT * FROM devices ORDER BY last_seen DESC LIMIT 100`,
-    [],
-    (err, rows) => {
-      res.json(rows);
-    },
-  );
+  res.json(history.slice(-100)); // последние 100
 });
 
+// очистка
 app.delete("/devices", (req, res) => {
   devices = {};
-  db.run(`DELETE FROM devices`);
+  history = [];
   res.json({ ok: true });
 });
 

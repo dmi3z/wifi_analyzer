@@ -10,6 +10,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@abandonware/noble": "^1.9.2-26",
     "cors": "^2.8.6",
     "express": "^5.2.1"
   }
