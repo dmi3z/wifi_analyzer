@@ -158,7 +158,7 @@ async function parseNetworkBlock(block, allChannels) {
   const utilization = Math.round((utilizationRaw / 255) * 100);
 
   const security = parseSecurity(block);
-  const manufacturer = await lookupMac(bssid);
+  const manufacturer = await lookupMac("c4:b8:b4:33:25:e4");
 
   // Interference
   const overlappingChannels = getOverlappingChannels(channel);
