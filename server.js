@@ -484,6 +484,69 @@ app.delete("/devices", (req, res) => {
   res.json({ ok: true });
 });
 
+// Подключение к Bluetooth устройству по MAC адресу
+app.post("/bluetooth/connect/:mac", async (req, res) => {
+  const mac = req.params.mac.toLowerCase();
+  
+  try {
+    // Найти устройство среди обнаруженных
+    const device = Object.values(devices).find(d => d.mac.toLowerCase() === mac);
+    
+    if (!device) {
+      return res.status(404).json({ 
+        error: "Device not found", 
+        message: "Device not found" 
+      });
+    }
+
+    // Попытка подключения через noble
+    noble.connect(mac, (error) => {
+      if (error) {
+        console.error(`Failed to connect to ${mac}:`, error);
+        return res.status(500).json({ 
+          error: "Connection failed", 
+          message: `Connection failed to ${mac}: ${error.message}` 
+        });
+      }
+
+      res.json({ 
+        status: "connected", 
+        mac: mac,
+        device: device,
+        message: `Successfully connected to ${mac}` 
+      });
+    });
+
+  } catch (error) {
+    console.error(`Error connecting to ${mac}:`, error);
+    res.status(500).json({ 
+      error: "Connection error", 
+      message: `Error connecting to ${mac}: ${error.message}` 
+    });
+  }
+});
+
+// Отключение от Bluetooth устройства
+app.post("/bluetooth/disconnect/:mac", async (req, res) => {
+  const mac = req.params.mac.toLowerCase();
+  
+  try {
+    noble.disconnect(mac);
+    console.log(`Disconnected from ${mac}`);
+    res.json({ 
+      status: "disconnected", 
+      mac: mac,
+      message: `Disconnected from ${mac}` 
+    });
+  } catch (error) {
+    console.error(`Error disconnecting from ${mac}:`, error);
+    res.status(500).json({ 
+      error: "Disconnection error", 
+      message: `Error disconnecting from ${mac}: ${error.message}` 
+    });
+  }
+});
+
 // --- BTMON ---
 let btmon = null;
 
