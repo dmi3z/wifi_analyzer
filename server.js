@@ -139,7 +139,7 @@ function computeOverall({
 }
 
 async function parseNetworkBlock(block, allChannels) {
-  const ssid = (block.match(/SSID: (.+)/) || [])[1] || "Hidden";
+  const ssid = (block.match(/SSID: (.+)/) || [])[1] || null;
   const bssid = (block.match(/BSS ([0-9a-f:]+)/) || [])[1];
   const freq = parseInt((block.match(/freq: (\d+)/) || [])[1]);
   const signalDbm = parseFloat((block.match(/signal: (-\d+\.\d+)/) || [])[1]);
