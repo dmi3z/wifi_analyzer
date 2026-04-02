@@ -499,17 +499,53 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
       });
     }
 
-    // Найти peripheral в noble
-    const peripheral = noble._peripherals[mac];
+    // Попытка найти и подключиться к peripheral
+    // Сначала проверяем в _peripherals
+    let peripheral = noble._peripherals[mac];
     
     if (!peripheral) {
-      return res.status(404).json({ 
-        error: "Peripheral not found", 
-        message: "Device not found in noble peripherals" 
+      // Если не нашли, попробуем найти через startScanning и ждать discovery
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          noble.stopScanning();
+          reject(new Error('Device not found after scanning'));
+        }, 5000);
+
+        const onDiscover = (peripheral) => {
+          if (peripheral.address.toLowerCase() === mac) {
+            clearTimeout(timeout);
+            noble.removeListener('discover', onDiscover);
+            noble.stopScanning();
+            
+            peripheral.connect((error) => {
+              if (error) {
+                reject(error);
+              } else {
+                resolve(peripheral);
+              }
+            });
+          }
+        };
+
+        noble.on('discover', onDiscover);
+        noble.startScanning([], true);
+      }).then(peripheral => {
+        res.json({ 
+          status: "connected", 
+          mac: mac,
+          device: device,
+          message: `Successfully connected to ${mac}` 
+        });
+      }).catch(error => {
+        console.error(`Failed to connect to ${mac}:`, error);
+        res.status(500).json({ 
+          error: "Connection failed", 
+          message: `Connection failed to ${mac}: ${error.message}` 
+        });
       });
     }
 
-    // Попытка подключения
+    // Если peripheral найден, подключаемся напрямую
     peripheral.connect((error) => {
       if (error) {
         console.error(`Failed to connect to ${mac}:`, error);
@@ -542,7 +578,7 @@ app.post("/bluetooth/disconnect/:mac", async (req, res) => {
   
   try {
     // Найти peripheral в noble
-    const peripheral = noble._peripherals[mac];
+    let peripheral = noble._peripherals[mac];
     
     if (!peripheral) {
       return res.status(404).json({ 
