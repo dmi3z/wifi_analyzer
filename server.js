@@ -499,8 +499,18 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
       });
     }
 
-    // Попытка подключения через noble
-    noble.connect(mac, (error) => {
+    // Найти peripheral в noble
+    const peripheral = noble._peripherals[mac];
+    
+    if (!peripheral) {
+      return res.status(404).json({ 
+        error: "Peripheral not found", 
+        message: "Device not found in noble peripherals" 
+      });
+    }
+
+    // Попытка подключения
+    peripheral.connect((error) => {
       if (error) {
         console.error(`Failed to connect to ${mac}:`, error);
         return res.status(500).json({ 
@@ -531,7 +541,17 @@ app.post("/bluetooth/disconnect/:mac", async (req, res) => {
   const mac = req.params.mac.toLowerCase();
   
   try {
-    noble.disconnect(mac);
+    // Найти peripheral в noble
+    const peripheral = noble._peripherals[mac];
+    
+    if (!peripheral) {
+      return res.status(404).json({ 
+        error: "Peripheral not found", 
+        message: "Device not found in noble peripherals" 
+      });
+    }
+
+    peripheral.disconnect();
     console.log(`Disconnected from ${mac}`);
     res.json({ 
       status: "disconnected", 
