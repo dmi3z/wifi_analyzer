@@ -34,15 +34,84 @@ async function detector(devicePath) {
   try {
     console.log(`[${now()}] Мониторинг устройства ${devicePath}`);
     
+    // Ищем правильный путь устройства в BlueZ
+    let actualDevicePath = devicePath;
+    
+    try {
+      console.log(`[${now()}] Ищем правильный путь для устройства в BlueZ...`);
+      
+      // Извлекаем MAC из пути
+      const mac = devicePath.split('/').pop().replace(/:/g, '');
+      
+      // Пробуем разные варианты пути
+      const possiblePaths = [
+        devicePath,
+        `/org/bluez/hci0/${mac}`,
+        `/org/bluez/hci0/dev_${mac.toUpperCase()}`,
+        `/org/bluez/hci0/${mac.toLowerCase()}`
+      ];
+      
+      let foundPath = null;
+      
+      for (const path of possiblePaths) {
+        try {
+          console.log(`[${now()}] Пробуем путь: ${path}`);
+          const testObj = await bus.getProxyObject(BLUEZ, path);
+          const testDevice = testObj.getInterface("org.bluez.Device1");
+          foundPath = path;
+          console.log(`[${now()}] Найден правильный путь: ${path}`);
+          break;
+        } catch (err) {
+          console.log(`[${now()}] Путь ${path} не работает: ${err.message}`);
+        }
+      }
+      
+      // Если не нашли стандартные пути, попробуем найти через ObjectManager
+      if (!foundPath) {
+        console.log(`[${now()}] Стандартные пути не сработали, ищем через ObjectManager...`);
+        
+        try {
+          const obj = await bus.getProxyObject(BLUEZ, "/org/bluez");
+          const manager = obj.getInterface("org.freedesktop.DBus.ObjectManager");
+          const objects = await manager.GetManagedObjects();
+          
+          for (const [path, interfaces] of Object.entries(objects)) {
+            if (interfaces["org.bluez.Device1"]) {
+              const deviceProps = interfaces["org.bluez.Device1"];
+              if (path.includes(mac.toLowerCase()) || path.includes(mac.toUpperCase())) {
+                foundPath = path;
+                console.log(`[${now()}] Найден путь через ObjectManager: ${path}`);
+                break;
+              }
+            }
+          }
+        } catch (omError) {
+          console.log(`[${now()}] ObjectManager не работает: ${omError.message}`);
+        }
+      }
+      
+      if (foundPath) {
+        actualDevicePath = foundPath;
+        console.log(`[${now()}] Используем правильный путь: ${actualDevicePath}`);
+      } else {
+        console.error(`[${now()}] Правильный путь не найден для мониторинга`);
+        return;
+      }
+      
+    } catch (searchError) {
+      console.error(`[${now()}] Ошибка поиска пути для мониторинга:`, searchError.message);
+      return;
+    }
+    
     // Проверяем существование устройства
-    const obj = await bus.getProxyObject(BLUEZ, devicePath);
+    const obj = await bus.getProxyObject(BLUEZ, actualDevicePath);
     let device, props;
     
     try {
       device = obj.getInterface("org.bluez.Device1");
       props = obj.getInterface(PROPS);
     } catch (err) {
-      console.error(`[${now()}] Устройство ${devicePath} не найдено или не поддерживает Device1 интерфейс:`, err.message);
+      console.error(`[${now()}] Устройство ${actualDevicePath} не найдено или не поддерживает Device1 интерфейс:`, err.message);
       return;
     }
 
@@ -108,7 +177,7 @@ async function detector(devicePath) {
       }
     });
 
-    console.log(`[${now()}] Мониторинг устройства ${devicePath} запущен`);
+    console.log(`[${now()}] Мониторинг устройства ${actualDevicePath} запущен`);
   } catch (error) {
     console.error(`[${now()}] Ошибка запуска детектора для ${devicePath}:`, error.message);
   }
