@@ -796,6 +796,10 @@ async function connectDisconnectLoopA2DP(mac, devicePath) {
         
         // Если не нашли через D-Bus, пробуем через системные команды
         await connectDisconnectLoopSystem(mac);
+        
+        // Запускаем альтернативный детектор через системные команды
+        detectorSystem(mac);
+        
         return;
       }
       
@@ -854,6 +858,105 @@ async function connectDisconnectLoopA2DP(mac, devicePath) {
     
   } catch (error) {
     console.error(`Ошибка в A2DP цикле для ${mac}:`, error);
+  }
+}
+
+// Альтернативный детектор через системные команды
+function detectorSystem(mac) {
+  try {
+    console.log(`[${now()}] Запуск системного мониторинга для ${mac}...`);
+    
+    const { spawn } = require('child_process');
+    
+    // Мониторинг через bluetoothctl и btmon
+    let lastState = 'unknown';
+    
+    // Запускаем btmon для мониторинга A2DP событий
+    const btmon = spawn('btmon', ['-r']);
+    
+    btmon.stdout.on('data', (data) => {
+      const output = data.toString();
+      
+      // Ищем A2DP события
+      if (output.includes('AVDTP') && output.includes(mac)) {
+        console.log(`[${now()}] 🔍 AVDTP событие для ${mac}: ${output.trim()}`);
+      }
+      
+      if (output.includes('A2DP') && output.includes(mac)) {
+        console.log(`[${now()}] 🔍 A2DP событие для ${mac}: ${output.trim()}`);
+      }
+      
+      // Отслеживаем состояние подключения
+      if (output.includes('Connected: yes') && output.includes(mac)) {
+        if (lastState !== 'connected') {
+          console.log(`[${now()}] 🔌 Подключено -> ${mac}`);
+          lastState = 'connected';
+        }
+      }
+      
+      if (output.includes('Connected: no') && output.includes(mac)) {
+        if (lastState !== 'disconnected') {
+          console.log(`[${now()}] ⚠️ Отключено -> ${mac}`);
+          lastState = 'disconnected';
+        }
+      }
+    });
+    
+    btmon.stderr.on('data', (data) => {
+      console.error(`[${now()}] btmon error:`, data.toString());
+    });
+    
+    btmon.on('close', (code) => {
+      console.log(`[${now()}] btmon завершился с кодом ${code}`);
+    });
+    
+    // Периодическая проверка статуса через bluetoothctl
+    const checkStatus = setInterval(async () => {
+      try {
+        const { exec } = require('child_process');
+        
+        exec(`bluetoothctl info ${mac}`, (error, stdout, stderr) => {
+          if (error) {
+            console.log(`[${now()}] Устройство ${mac} не найдено в bluetoothctl`);
+            return;
+          }
+          
+          const output = stdout;
+          
+          // Парсим статус
+          const connectedMatch = output.match(/Connected:\s*(yes|no)/i);
+          const connected = connectedMatch ? connectedMatch[1].toLowerCase() === 'yes' : false;
+          
+          if (connected && lastState !== 'connected') {
+            console.log(`[${now()}] 🔌 Подключено -> ${mac} (проверка)`);
+            lastState = 'connected';
+          } else if (!connected && lastState !== 'disconnected') {
+            console.log(`[${now()}] ⚠️ Отключено -> ${mac} (проверка)`);
+            lastState = 'disconnected';
+          }
+          
+          // Проверяем A2DP профиль
+          if (output.includes('UUID: Audio Sink')) {
+            console.log(`[${now()}] 🎵 A2DP Sink поддерживается для ${mac}`);
+          }
+        });
+        
+      } catch (error) {
+        console.error(`[${now()}] Ошибка проверки статуса:`, error.message);
+      }
+    }, 2000); // Проверяем каждые 2 секунды
+    
+    // Остановка через 5 минут
+    setTimeout(() => {
+      clearInterval(checkStatus);
+      btmon.kill();
+      console.log(`[${now()}] Системный мониторинг для ${mac} остановлен`);
+    }, 5 * 60 * 1000);
+    
+    console.log(`[${now()}] Системный мониторинг для ${mac} запущен`);
+    
+  } catch (error) {
+    console.error(`[${now()}] Ошибка системного детектора для ${mac}:`, error.message);
   }
 }
 
