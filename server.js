@@ -916,23 +916,25 @@ app.post("/bluetooth/volume/:mac", async (req, res) => {
     
     if (commandType === 'down') {
       volumeCommands = [
+        Buffer.from([0x01]),             // JBL volume down (single byte)
+        Buffer.from([0x00]),             // JBL volume down alternative
         Buffer.from([0x01, 0x00]),       // Volume Down для 2b29
         Buffer.from([0x00, 0x01]),       // Уменьшение на 1
+        Buffer.from([0x02]),             // JBL command 2
         Buffer.from([0x01, 0x02]),       // Уменьшение громкости v2
         Buffer.from([0x03, 0x01]),       // Volume down альтернатива
-        Buffer.from([0x00, 0x00]),       // Минимальная громкость
         Buffer.from([0x80, 0x00]),       // Установка 0%
-        Buffer.from([0x01]),             // Single byte volume down
-        Buffer.from([0x02]),             // Single byte command 2
         Buffer.from([0x00, 0x80, 0x00]), // 3-byte command
         Buffer.from([0xA0, 0x01])        // Alternative format
       ];
     } else if (commandType === 'up') {
       volumeCommands = [
+        Buffer.from([0x02]),             // JBL volume up (single byte)
+        Buffer.from([0xFF]),             // JBL volume up alternative
         Buffer.from([0x02, 0x00]),       // Volume Up
         Buffer.from([0x00, 0xFF]),       // Увеличение на 1
+        Buffer.from([0x03]),             // JBL command 3
         Buffer.from([0xFF, 0x00]),       // Максимальная громкость
-        Buffer.from([0xFF]),             // Single byte max
         Buffer.from([0x00, 0xFF, 0x00]), // 3-byte max
         Buffer.from([0xA0, 0x02])        // Alternative up
       ];
@@ -948,26 +950,27 @@ app.post("/bluetooth/volume/:mac", async (req, res) => {
       }
     } else if (commandType === 'mute') {
       volumeCommands = [
+        Buffer.from([0x00]),             // JBL mute (single byte)
         Buffer.from([0x00, 0x00]),       // Mute/Min volume
-        Buffer.from([0x00]),             // Single byte mute
+        Buffer.from([0x80]),             // JBL mute alternative
         Buffer.from([0x80, 0x00]),       // Alternative mute
         Buffer.from([0xA0, 0x00])        // Another mute format
       ];
     } else {
-      // По умолчанию - расширенный набор volume down
+      // По умолчанию - JBL оптимизированный набор
       volumeCommands = [
+        Buffer.from([0x01]),             // JBL volume down (single byte) - ПРИОРИТЕТ
+        Buffer.from([0x00]),             // JBL volume down alternative
+        Buffer.from([0x02]),             // JBL volume up (для проверки)
+        Buffer.from([0xFF]),             // JBL volume up alternative
         Buffer.from([0x01, 0x00]),       // Volume Down для 2b29
         Buffer.from([0x02, 0x00]),       // Volume Up (для проверки)
         Buffer.from([0x00, 0x80]),       // Установка громкости 50%
         Buffer.from([0x00, 0x00]),       // Минимальная громкость
         Buffer.from([0x00, 0x01]),       // Уменьшение на 1
         Buffer.from([0xFF, 0x00]),       // Максимальная громкость
-        Buffer.from([0x00, 0x10]),       // Громкость 16/255
         Buffer.from([0x01, 0x02]),       // Уменьшение громкости v2
-        Buffer.from([0x03, 0x01]),       // Volume down альтернатива
-        Buffer.from([0x01]),             // Single byte
-        Buffer.from([0x80, 0x00]),       // Alternative format
-        Buffer.from([0xA0, 0x01])        // Another format
+        Buffer.from([0x03, 0x01])        // Volume down альтернатива
       ];
     }
 
