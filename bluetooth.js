@@ -567,7 +567,6 @@ function floodVolumeCommands(mac, res) {
       
       let scanTimeout;
       let found = false;
-      let responseSent = false;
       
       const onDiscover = (p) => {
         console.log(`Discovered device during flood scan: ${p.address} (looking for ${mac})`);
@@ -669,39 +668,41 @@ function floodVolumeCommands(mac, res) {
     let floodInterval;
     let isConnected = false;
     let writableCharacteristics = [];
+    let responseSent = false;
+
+    // Функция для запуска флуда
+    function startFlood() {
+      console.log(`Starting flood with ${floodCommands.length} commands for 10 seconds...`);
+      
+      floodInterval = setInterval(() => {
+        if (commandIndex >= floodCommands.length) {
+          commandIndex = 0; // Зацикливаем команды
+        }
+
+        const cmd = floodCommands[commandIndex];
+        
+        // Пишем во все writable характеристики
+        writableCharacteristics.forEach((char, index) => {
+          const useWithoutResponse = char.properties.includes('writeWithoutResponse');
+          
+          try {
+            char.write(cmd, useWithoutResponse, (error) => {
+              if (error) {
+                console.error(`Flood command ${commandIndex} failed on char ${index}:`, error.message);
+              } else {
+                console.log(`Flood command ${commandIndex} (${cmd.toString('hex')}) sent to ${char.uuid}`);
+              }
+            });
+          } catch (err) {
+            console.error(`Error writing to characteristic ${char.uuid}:`, err.message);
+          }
+        });
+        
+        commandIndex++;
+      }, 10); // Каждые 100мс новая команда
+    }
 
     function startFloodSession() {
-      // Функция для запуска флуда
-      function startFlood() {
-        console.log(`Starting flood with ${floodCommands.length} commands for 10 seconds...`);
-        
-        floodInterval = setInterval(() => {
-          if (commandIndex >= floodCommands.length) {
-            commandIndex = 0; // Зацикливаем команды
-          }
-
-          const cmd = floodCommands[commandIndex];
-          
-          // Пишем во все writable характеристики
-          writableCharacteristics.forEach((char, index) => {
-            const useWithoutResponse = char.properties.includes('writeWithoutResponse');
-            
-            try {
-              char.write(cmd, useWithoutResponse, (error) => {
-                if (error) {
-                  console.error(`Flood command ${commandIndex} failed on char ${index}:`, error.message);
-                } else {
-                  console.log(`Flood command ${commandIndex} (${cmd.toString('hex')}) sent to ${char.uuid}`);
-                }
-              });
-            } catch (err) {
-              console.error(`Error writing to characteristic ${char.uuid}:`, err.message);
-            }
-          });
-          
-          commandIndex++;
-        }, 100); // Каждые 100мс новая команда
-      }
 
       // Подключаемся к устройству
       if (peripheral.state === 'connected') {
