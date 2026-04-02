@@ -34,9 +34,17 @@ async function detector(devicePath) {
   try {
     console.log(`[${now()}] Мониторинг устройства ${devicePath}`);
     
+    // Проверяем существование устройства
     const obj = await bus.getProxyObject(BLUEZ, devicePath);
-    const device = obj.getInterface("org.bluez.Device1");
-    const props = obj.getInterface(PROPS);
+    let device, props;
+    
+    try {
+      device = obj.getInterface("org.bluez.Device1");
+      props = obj.getInterface(PROPS);
+    } catch (err) {
+      console.error(`[${now()}] Устройство ${devicePath} не найдено или не поддерживает Device1 интерфейс:`, err.message);
+      return;
+    }
 
     // --- Текущее состояние ---
     const connected = await props.Get("org.bluez.Device1", "Connected");
@@ -102,14 +110,24 @@ async function detector(devicePath) {
 
     console.log(`[${now()}] Мониторинг устройства ${devicePath} запущен`);
   } catch (error) {
-    console.error(`[${now()}] Ошибка запуска детектора для ${devicePath}:`, error);
+    console.error(`[${now()}] Ошибка запуска детектора для ${devicePath}:`, error.message);
   }
 }
 
 async function connectDisconnectLoop(mac) {
   try {
-    const obj = await bus.getProxyObject("org.bluez", "/org/bluez/hci0/" + mac);
-    const device = obj.getInterface(interfaceName);
+    const devicePath = "/org/bluez/hci0/" + mac;
+    console.log(`Проверка устройства ${devicePath} для цикла connect/disconnect...`);
+    
+    const obj = await bus.getProxyObject("org.bluez", devicePath);
+    let device;
+    
+    try {
+      device = obj.getInterface(interfaceName);
+    } catch (err) {
+      console.error(`Устройство ${devicePath} не найдено для цикла:`, err.message);
+      return;
+    }
 
     console.log("Начало цикла connect/disconnect...");
 
@@ -441,6 +459,51 @@ app.post("/bluetooth/connect-disconnect-loop/:mac", async (req, res) => {
     res.status(500).json({ 
       error: "Loop start failed", 
       message: `Error starting loop for ${mac}: ${error.message}` 
+    });
+  }
+});
+
+// Показать доступные устройства в BlueZ
+app.get("/bluetooth/bluez-devices", async (req, res) => {
+  try {
+    console.log("Получение списка устройств из BlueZ...");
+    
+    // Получаем корневой объект BlueZ
+    const obj = await bus.getProxyObject(BLUEZ, "/org/bluez");
+    const manager = obj.getInterface("org.freedesktop.DBus.ObjectManager");
+    
+    // Получаем все объекты
+    const objects = await manager.GetManagedObjects();
+    const devices = [];
+    
+    for (const [path, interfaces] of Object.entries(objects)) {
+      if (interfaces["org.bluez.Device1"]) {
+        const deviceProps = interfaces["org.bluez.Device1"];
+        devices.push({
+          path: path,
+          address: deviceProps.Address || "Unknown",
+          name: deviceProps.Name || "Unknown",
+          alias: deviceProps.Alias || "Unknown",
+          connected: deviceProps.Connected || false,
+          paired: deviceProps.Paired || false,
+          trusted: deviceProps.Trusted || false,
+          uuids: deviceProps.UUIDs || []
+        });
+      }
+    }
+    
+    console.log(`Найдено ${devices.length} устройств в BlueZ`);
+    
+    res.json({ 
+      status: "success", 
+      devices: devices,
+      message: `Found ${devices.length} devices in BlueZ` 
+    });
+  } catch (error) {
+    console.error("Error getting BlueZ devices:", error);
+    res.status(500).json({ 
+      error: "Failed to get devices", 
+      message: `Error getting BlueZ devices: ${error.message}` 
     });
   }
 });
