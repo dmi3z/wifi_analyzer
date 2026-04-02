@@ -214,6 +214,42 @@ ouiText.split("\n").forEach((line) => {
 // Setup Bluetooth events
 bluetooth.setupNobleEvents();
 
+// Делаем функцию обновления глобальной
+global.broadcastDeviceUpdate = broadcastDeviceUpdate;
+
+// Функция для отправки обновлений устройств всем SSE клиентам
+function broadcastDeviceUpdate() {
+  try {
+    const noble = require("@abandonware/noble");
+    const devices = Object.values(noble._peripherals || {}).map(p => ({
+      address: p.address,
+      name: p.advertisement.localName || 'Unknown',
+      rssi: p.rssi || 0,
+      state: p.state || 'unknown',
+      services: p.services || []
+    }));
+    
+    const message = JSON.stringify({ type: 'devices_update', data: devices });
+    
+    bluetooth.clients.forEach(client => {
+      if (client && !client.destroyed && client.writable) {
+        try {
+          client.write(`data: ${message}\n\n`);
+          if (client.flush) {
+            client.flush();
+          }
+        } catch (err) {
+          console.error(`[${now()}] Ошибка отправки обновления клиенту:`, err.message);
+        }
+      }
+    });
+    
+    console.log(`[${now()}] Обновление отправлено ${bluetooth.clients.length} клиентам, устройств: ${devices.length}`);
+  } catch (error) {
+    console.error(`[${now()}] Ошибка broadcast обновления:`, error.message);
+  }
+}
+
 // Очистка мертвых SSE соединений каждые 30 секунд
 setInterval(() => {
   const initialCount = bluetooth.clients.length;
@@ -259,13 +295,26 @@ app.get("/events", (req, res) => {
       return;
     }
     
-    // Отправляем начальное сообщение
+    // Отправляем начальное сообщение с текущими устройствами
     try {
-      res.write("data: connected\n\n");
+      res.write(`data: ${JSON.stringify({ type: 'connected', message: 'SSE connected' })}\n\n`);
+      
+      // Отправляем текущие BLE устройства
+      const noble = require("@abandonware/noble");
+      const devices = Object.values(noble._peripherals || {}).map(p => ({
+        address: p.address,
+        name: p.advertisement.localName || 'Unknown',
+        rssi: p.rssi || 0,
+        state: p.state || 'unknown',
+        services: p.services || []
+      }));
+      
+      res.write(`data: ${JSON.stringify({ type: 'devices', data: devices })}\n\n`);
+      
       if (res.flush) {
         res.flush();
       }
-      console.log(`[${now()}] Начальное сообщение отправлено`);
+      console.log(`[${now()}] Начальное сообщение отправлено, устройств: ${devices.length}`);
     } catch (writeError) {
       console.error(`[${now()}] Ошибка записи:`, writeError.message);
       return;
@@ -293,18 +342,29 @@ app.get("/events", (req, res) => {
     const pingInterval = setInterval(() => {
       if (!res.destroyed && res.writable) {
         try {
-          res.write("data: ping\n\n");
+          // Отправляем актуальные данные об устройствах
+          const noble = require("@abandonware/noble");
+          const devices = Object.values(noble._peripherals || {}).map(p => ({
+            address: p.address,
+            name: p.advertisement.localName || 'Unknown',
+            rssi: p.rssi || 0,
+            state: p.state || 'unknown',
+            services: p.services || []
+          }));
+          
+          res.write(`data: ${JSON.stringify({ type: 'devices_update', data: devices })}\n\n`);
+          
           if (res.flush) {
             res.flush();
           }
-          console.log(`[${now()}] Ping отправлен`);
+          console.log(`[${now()}] Обновление устройств отправлено: ${devices.length} устройств`);
         } catch (err) {
-          console.error(`[${now()}] Ошибка отправки ping:`, err.message);
+          console.error(`[${now()}] Ошибка отправки обновления:`, err.message);
           clearInterval(pingInterval);
           bluetooth.clients = bluetooth.clients.filter((c) => c !== res);
         }
       } else {
-        console.log(`[${now()}] Соединение неактивно, останавливаем ping`);
+        console.log(`[${now()}] Соединение неактивно, останавливаем обновления`);
         clearInterval(pingInterval);
         bluetooth.clients = bluetooth.clients.filter((c) => c !== res);
       }

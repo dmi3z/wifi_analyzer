@@ -142,6 +142,26 @@ function setupNobleEvents() {
     if (history.length > 1000) history.shift();
 
     broadcast("device", devices[mac]);
+    
+    // Отправляем обновление SSE клиентам
+    if (typeof global.broadcastDeviceUpdate === 'function') {
+      global.broadcastDeviceUpdate();
+    }
+  });
+  
+  // Также отслеживаем изменения состояния подключения
+  noble.on("connect", (peripheral) => {
+    console.log(`Device connected: ${peripheral.address}`);
+    if (typeof global.broadcastDeviceUpdate === 'function') {
+      global.broadcastDeviceUpdate();
+    }
+  });
+  
+  noble.on("disconnect", (peripheral) => {
+    console.log(`Device disconnected: ${peripheral.address}`);
+    if (typeof global.broadcastDeviceUpdate === 'function') {
+      global.broadcastDeviceUpdate();
+    }
   });
 }
 
