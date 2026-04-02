@@ -412,14 +412,14 @@ function sendVolumeCommand(mac, { command, commandType, action }, res) {
         Buffer.from([0xA0, 0x00])        // Another mute format
       ];
     } else {
-      // По умолчанию - ExcelPoint оптимизированный набор
+      // По умолчанию - JBL Go 4 оптимизированный набор
       volumeCommands = [
-        Buffer.from([0x02]),             // ExcelPoint volume down - ПРИОРИТЕТ
+        Buffer.from([0x01]),             // JBL volume down (single byte) - ПРИОРИТЕТ
+        Buffer.from([0x02]),             // ExcelPoint volume down
         Buffer.from([0x03]),             // ExcelPoint volume down v2
-        Buffer.from([0x01]),             // JBL volume down (single byte)
         Buffer.from([0x00]),             // JBL volume down alternative
-        Buffer.from([0x01]),             // ExcelPoint volume up (для проверки)
-        Buffer.from([0x04]),             // ExcelPoint volume up v2
+        Buffer.from([0x04]),             // ExcelPoint volume up (для проверки)
+        Buffer.from([0x01]),             // ExcelPoint volume up
         Buffer.from([0x02]),             // JBL volume up (для проверки)
         Buffer.from([0xFF]),             // JBL volume up alternative
         Buffer.from([0x01, 0x00]),       // Volume Down для 2b29
@@ -429,7 +429,22 @@ function sendVolumeCommand(mac, { command, commandType, action }, res) {
         Buffer.from([0x00, 0x01]),       // Уменьшение на 1
         Buffer.from([0xFF, 0x00]),       // Максимальная громкость
         Buffer.from([0x01, 0x02]),       // Уменьшение громкости v2
-        Buffer.from([0x03, 0x01])        // Volume down альтернатива
+        Buffer.from([0x03, 0x01]),       // Volume down альтернатива
+        Buffer.from([0x10]),             // JBL specific command 1
+        Buffer.from([0x20]),             // JBL specific command 2
+        Buffer.from([0x30]),             // JBL specific command 3
+        Buffer.from([0x40]),             // JBL specific command 4
+        Buffer.from([0x50]),             // JBL specific command 5
+        Buffer.from([0x60]),             // JBL specific command 6
+        Buffer.from([0x70]),             // JBL specific command 7
+        Buffer.from([0x80]),             // JBL specific command 8
+        Buffer.from([0x90]),             // JBL specific command 9
+        Buffer.from([0xA0]),             // JBL specific command 10
+        Buffer.from([0xB0]),             // JBL specific command 11
+        Buffer.from([0xC0]),             // JBL specific command 12
+        Buffer.from([0xD0]),             // JBL specific command 13
+        Buffer.from([0xE0]),             // JBL specific command 14
+        Buffer.from([0xF0])              // JBL specific command 15
       ];
     }
 
@@ -453,6 +468,10 @@ function sendVolumeCommand(mac, { command, commandType, action }, res) {
       
       console.log(`Trying volume command ${commandIndex + 1}/${volumeCommands.length}:`, cmd.toString('hex'), `(${cmd.length} bytes) on characteristic ${char.uuid}`);
       
+      // Добавляем диагностику перед записью
+      console.log(`Characteristic properties: ${char.properties.join(', ')}`);
+      console.log(`Using writeWithoutResponse: ${useWithoutResponse}`);
+      
       // Добавляем таймаут для операции записи
       const writeTimeout = setTimeout(() => {
         console.error(`Volume command ${commandIndex + 1} timeout after 3s`);
@@ -470,6 +489,7 @@ function sendVolumeCommand(mac, { command, commandType, action }, res) {
           tryNextCommand();
         } else {
           console.log(`Volume command ${commandIndex + 1} succeeded:`, cmd.toString('hex'));
+          console.log(`Command written to characteristic ${char.uuid} using ${useWithoutResponse ? 'writeWithoutResponse' : 'write'} method`);
           return res.json({ 
             status: "success", 
             mac: mac,
