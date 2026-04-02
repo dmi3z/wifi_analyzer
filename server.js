@@ -665,6 +665,78 @@ async function connectDisconnectLoopA2DP(mac, devicePath) {
   try {
     console.log(`Начинаем A2DP цикл connect/disconnect для ${mac}...`);
     
+    // Сначала найдем правильный путь устройства в BlueZ
+    let actualDevicePath = devicePath;
+    
+    try {
+      console.log(`Ищем правильный путь для устройства ${mac} в BlueZ...`);
+      
+      // Пробуем разные варианты пути
+      const possiblePaths = [
+        `/org/bluez/hci0/${mac.replace(/:/g, '')}`,
+        `/org/bluez/hci0/dev_${mac.replace(/:/g, '').toUpperCase()}`,
+        `/org/bluez/hci0/${mac}`,
+        `/org/bluez/hci0/dev_${mac.replace(/:/g, '')}`,
+        `/org/bluez/hci0/${mac.replace(/:/g, '').toLowerCase()}`
+      ];
+      
+      let foundPath = null;
+      
+      for (const path of possiblePaths) {
+        try {
+          console.log(`Пробуем путь: ${path}`);
+          const testObj = await bus.getProxyObject(BLUEZ, path);
+          const testDevice = testObj.getInterface("org.bluez.Device1");
+          foundPath = path;
+          console.log(`Найден правильный путь: ${path}`);
+          break;
+        } catch (err) {
+          console.log(`Путь ${path} не работает: ${err.message}`);
+        }
+      }
+      
+      // Если не нашли стандартные пути, попробуем найти через ObjectManager
+      if (!foundPath) {
+        console.log(`Стандартные пути не сработали, ищем через ObjectManager...`);
+        
+        try {
+          const obj = await bus.getProxyObject(BLUEZ, "/org/bluez");
+          const manager = obj.getInterface("org.freedesktop.DBus.ObjectManager");
+          const objects = await manager.GetManagedObjects();
+          
+          for (const [path, interfaces] of Object.entries(objects)) {
+            if (interfaces["org.bluez.Device1"]) {
+              const deviceProps = interfaces["org.bluez.Device1"];
+              if (deviceProps.Address && deviceProps.Address.toLowerCase() === mac) {
+                foundPath = path;
+                console.log(`Найден путь через ObjectManager: ${path}`);
+                break;
+              }
+            }
+          }
+        } catch (omError) {
+          console.log(`ObjectManager не работает: ${omError.message}`);
+        }
+      }
+      
+      if (foundPath) {
+        actualDevicePath = foundPath;
+        console.log(`Используем правильный путь: ${actualDevicePath}`);
+      } else {
+        console.log(`Правильный путь не найден, пробуем системные команды...`);
+        
+        // Если не нашли через D-Bus, пробуем через системные команды
+        await connectDisconnectLoopSystem(mac);
+        return;
+      }
+      
+    } catch (searchError) {
+      console.error(`Ошибка поиска пути:`, searchError.message);
+      console.log(`Пробуем системные команды...`);
+      await connectDisconnectLoopSystem(mac);
+      return;
+    }
+    
     let counter = 0;
     const maxIterations = 10;
     
@@ -678,7 +750,7 @@ async function connectDisconnectLoopA2DP(mac, devicePath) {
       
       try {
         // Получаем интерфейс устройства
-        const obj = await bus.getProxyObject(BLUEZ, devicePath);
+        const obj = await bus.getProxyObject(BLUEZ, actualDevicePath);
         const device = obj.getInterface("org.bluez.Device1");
         
         // Отключаемся если подключены
@@ -713,6 +785,64 @@ async function connectDisconnectLoopA2DP(mac, devicePath) {
     
   } catch (error) {
     console.error(`Ошибка в A2DP цикле для ${mac}:`, error);
+  }
+}
+
+// Fallback на системные команды для A2DP
+async function connectDisconnectLoopSystem(mac) {
+  try {
+    console.log(`Используем системные команды для A2DP цикла ${mac}...`);
+    
+    let counter = 0;
+    const maxIterations = 10;
+    
+    const loop = async () => {
+      if (counter >= maxIterations) {
+        console.log(`Завершение системного A2DP цикла после ${maxIterations} итераций`);
+        return;
+      }
+      
+      console.log(`Системная A2DP Итерация ${counter + 1}/${maxIterations}`);
+      
+      try {
+        // Отключаем через bluetoothctl
+        console.log(`Отключаем A2DP от ${mac} через bluetoothctl...`);
+        const { spawn } = require('child_process');
+        
+        await new Promise((resolve, reject) => {
+          const disconnect = spawn('bluetoothctl', ['disconnect', mac]);
+          disconnect.on('close', (code) => {
+            console.log(`bluetoothctl disconnect завершился с кодом ${code}`);
+            setTimeout(resolve, 2000);
+          });
+        });
+        
+        // Подключаем через bluetoothctl
+        console.log(`Подключаем A2DP к ${mac} через bluetoothctl...`);
+        
+        await new Promise((resolve, reject) => {
+          const connect = spawn('bluetoothctl', ['connect', mac]);
+          connect.on('close', (code) => {
+            console.log(`bluetoothctl connect завершился с кодом ${code}`);
+            setTimeout(resolve, 3000);
+          });
+        });
+        
+        counter++;
+        setTimeout(loop, 1000);
+        
+      } catch (error) {
+        console.error(`Ошибка в системной A2DP итерации ${counter}:`, error.message);
+        counter++;
+        setTimeout(loop, 3000);
+      }
+    };
+    
+    // Запускаем цикл
+    setTimeout(loop, 1000);
+    
+  } catch (error) {
+    console.error(`Ошибка в системном A2DP цикле для ${mac}:`, error);
   }
 }
 
