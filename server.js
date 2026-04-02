@@ -870,54 +870,50 @@ function detectorSystem(mac) {
     
     // Мониторинг через bluetoothctl и btmon
     let lastState = 'unknown';
+    let checkStatus;
+    let btmon;
     
     // Запускаем btmon для мониторинга A2DP событий
-    const btmon = spawn('btmon', ['-r']);
-    
-    btmon.stdout.on('data', (data) => {
-      const output = data.toString();
+    try {
+      btmon = spawn('btmon'); // Без опции -r
       
-      // Ищем A2DP события
-      if (output.includes('AVDTP') && output.includes(mac)) {
-        console.log(`[${now()}] 🔍 AVDTP событие для ${mac}: ${output.trim()}`);
-      }
-      
-      if (output.includes('A2DP') && output.includes(mac)) {
-        console.log(`[${now()}] 🔍 A2DP событие для ${mac}: ${output.trim()}`);
-      }
-      
-      // Отслеживаем состояние подключения
-      if (output.includes('Connected: yes') && output.includes(mac)) {
-        if (lastState !== 'connected') {
-          console.log(`[${now()}] 🔌 Подключено -> ${mac}`);
-          lastState = 'connected';
+      btmon.stdout.on('data', (data) => {
+        const output = data.toString();
+        
+        // Ищем A2DP события
+        if (output.includes('AVDTP') && output.includes(mac)) {
+          console.log(`[${now()}] 🔍 AVDTP событие для ${mac}: ${output.trim()}`);
         }
-      }
-      
-      if (output.includes('Connected: no') && output.includes(mac)) {
-        if (lastState !== 'disconnected') {
-          console.log(`[${now()}] ⚠️ Отключено -> ${mac}`);
-          lastState = 'disconnected';
+        
+        if (output.includes('A2DP') && output.includes(mac)) {
+          console.log(`[${now()}] 🔍 A2DP событие для ${mac}: ${output.trim()}`);
         }
-      }
-    });
-    
-    btmon.stderr.on('data', (data) => {
-      console.error(`[${now()}] btmon error:`, data.toString());
-    });
-    
-    btmon.on('close', (code) => {
-      console.log(`[${now()}] btmon завершился с кодом ${code}`);
-    });
+      });
+      
+      btmon.stderr.on('data', (data) => {
+        // Игнорируем ошибки btmon чтобы не спамить
+      });
+      
+      btmon.on('close', (code) => {
+        console.log(`[${now()}] btmon завершился с кодом ${code}`);
+      });
+    } catch (btmonError) {
+      console.log(`[${now()}] btmon не доступен, используем только bluetoothctl`);
+    }
     
     // Периодическая проверка статуса через bluetoothctl
-    const checkStatus = setInterval(async () => {
+    checkStatus = setInterval(async () => {
       try {
         const { exec } = require('child_process');
         
         exec(`bluetoothctl info ${mac}`, (error, stdout, stderr) => {
           if (error) {
-            console.log(`[${now()}] Устройство ${mac} не найдено в bluetoothctl`);
+            // Устройство не найдено - останавливаем мониторинг
+            if (error.message.includes('not found') || error.message.includes('Device not found')) {
+              console.log(`[${now()}] Устройство ${mac} отключено, останавливаем мониторинг`);
+              stopMonitoring();
+              return;
+            }
             return;
           }
           
@@ -946,17 +942,32 @@ function detectorSystem(mac) {
       }
     }, 2000); // Проверяем каждые 2 секунды
     
-    // Остановка через 5 минут
-    setTimeout(() => {
-      clearInterval(checkStatus);
-      btmon.kill();
+    // Функция остановки мониторинга
+    const stopMonitoring = () => {
+      if (checkStatus) {
+        clearInterval(checkStatus);
+        checkStatus = null;
+      }
+      if (btmon) {
+        btmon.kill();
+        btmon = null;
+      }
       console.log(`[${now()}] Системный мониторинг для ${mac} остановлен`);
+    };
+    
+    // Остановка через 5 минут или когда устройство пропадет
+    const timeout = setTimeout(() => {
+      stopMonitoring();
     }, 5 * 60 * 1000);
     
     console.log(`[${now()}] Системный мониторинг для ${mac} запущен`);
     
+    // Возвращаем функцию остановки для внешнего использования
+    return { stopMonitoring, timeout };
+    
   } catch (error) {
     console.error(`[${now()}] Ошибка системного детектора для ${mac}:`, error.message);
+    return { stopMonitoring: () => {}, timeout: null };
   }
 }
 
@@ -967,10 +978,23 @@ async function connectDisconnectLoopSystem(mac) {
     
     let counter = 0;
     const maxIterations = 10;
+    let monitoring;
+    
+    // Запускаем мониторинг
+    monitoring = detectorSystem(mac);
     
     const loop = async () => {
       if (counter >= maxIterations) {
         console.log(`Завершение системного A2DP цикла после ${maxIterations} итераций`);
+        
+        // Останавливаем мониторинг
+        if (monitoring && monitoring.stopMonitoring) {
+          monitoring.stopMonitoring();
+          if (monitoring.timeout) {
+            clearTimeout(monitoring.timeout);
+          }
+        }
+        
         return;
       }
       
