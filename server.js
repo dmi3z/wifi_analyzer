@@ -508,57 +508,61 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
       console.log(`Device ${mac} not in _peripherals, starting scan...`);
       console.log('Available peripherals:', Object.keys(noble._peripherals));
       
-      return new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
+      const timeout = setTimeout(() => {
+        noble.stopScanning();
+        noble.removeListener('discover', onDiscover);
+        console.log(`Scan timeout for ${mac}`);
+        return res.status(404).json({ 
+          error: "Device not found after scanning", 
+          message: `Device ${mac} not found after 10 seconds of scanning` 
+        });
+      }, 10000);
+
+      const onDiscover = (peripheral) => {
+        console.log(`Discovered device: ${peripheral.address} (looking for ${mac})`);
+        if (peripheral.address.toLowerCase() === mac) {
+          clearTimeout(timeout);
+          noble.removeListener('discover', onDiscover);
           noble.stopScanning();
-          console.log(`Scan timeout for ${mac}`);
-          reject(new Error('Device not found after scanning'));
-        }, 10000); // Увеличим таймаут до 10 секунд
-
-        const onDiscover = (peripheral) => {
-          console.log(`Discovered device: ${peripheral.address} (looking for ${mac})`);
-          if (peripheral.address.toLowerCase() === mac) {
-            clearTimeout(timeout);
-            noble.removeListener('discover', onDiscover);
-            noble.stopScanning();
-            
-            console.log(`Found target device ${mac}, attempting connection...`);
-            peripheral.connect((error) => {
-              if (error) {
-                console.error(`Connection error for ${mac}:`, error);
-                reject(error);
-              } else {
-                console.log(`Successfully connected to ${mac}`);
-                resolve(peripheral);
-              }
-            });
-          }
-        };
-
-        noble.on('discover', onDiscover);
-        
-        // Убедимся что сканирование запущено
-        if (noble.state === 'poweredOn') {
-          noble.startScanning([], true);
-          console.log('Started scanning for all devices');
-        } else {
-          console.log('Bluetooth not powered on, state:', noble.state);
-          reject(new Error('Bluetooth not powered on'));
+          
+          console.log(`Found target device ${mac}, attempting connection...`);
+          peripheral.connect((error) => {
+            if (error) {
+              console.error(`Connection error for ${mac}:`, error);
+              return res.status(500).json({ 
+                error: "Connection failed", 
+                message: `Connection failed to ${mac}: ${error.message}` 
+              });
+            } else {
+              console.log(`Successfully connected to ${mac}`);
+              return res.json({ 
+                status: "connected", 
+                mac: mac,
+                device: device,
+                message: `Successfully connected to ${mac}` 
+              });
+            }
+          });
         }
-      }).then(peripheral => {
-        res.json({ 
-          status: "connected", 
-          mac: mac,
-          device: device,
-          message: `Successfully connected to ${mac}` 
+      };
+
+      noble.on('discover', onDiscover);
+      
+      // Убедимся что сканирование запущено
+      if (noble.state === 'poweredOn') {
+        noble.startScanning([], true);
+        console.log('Started scanning for all devices');
+      } else {
+        clearTimeout(timeout);
+        noble.removeListener('discover', onDiscover);
+        console.log('Bluetooth not powered on, state:', noble.state);
+        return res.status(500).json({ 
+          error: "Bluetooth not powered on", 
+          message: `Bluetooth state: ${noble.state}` 
         });
-      }).catch(error => {
-        console.error(`Failed to connect to ${mac}:`, error);
-        res.status(500).json({ 
-          error: "Connection failed", 
-          message: `Connection failed to ${mac}: ${error.message}` 
-        });
-      });
+      }
+      
+      return; // Выходим из функции, ждем асинхронные колбэки
     }
 
     // Если peripheral найден, подключаемся напрямую
