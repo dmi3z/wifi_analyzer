@@ -255,6 +255,12 @@ app.post("/bluetooth/disconnect/:mac", async (req, res) => {
   bluetooth.disconnectDevice(mac, res);
 });
 
+// Flood volume commands (connect + flood + disconnect)
+app.post("/bluetooth/volume/:mac/flood", async (req, res) => {
+  const mac = req.params.mac.toLowerCase();
+  bluetooth.floodVolumeCommands(mac, res);
+});
+
 // --- BTMON ---
 let btmon = null;
 

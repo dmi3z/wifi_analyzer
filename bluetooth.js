@@ -553,12 +553,210 @@ function disconnectDevice(mac, res) {
   }
 }
 
+// Flood volume commands function
+function floodVolumeCommands(mac, res) {
+  try {
+    console.log(`Starting flood volume commands for ${mac}...`);
+    
+    // Сначала подключаем устройство
+    const noble = require("@abandonware/noble");
+    let peripheral = noble._peripherals[mac];
+    
+    if (!peripheral) {
+      return res.status(404).json({ 
+        error: "Peripheral not found", 
+        message: "Device not found in noble peripherals" 
+      });
+    }
+
+    const floodCommands = [
+      Buffer.from([0x01]),             // Single byte commands
+      Buffer.from([0x02]), 
+      Buffer.from([0x00]),
+      Buffer.from([0xFF]),
+      Buffer.from([0x01, 0x00]),       // 2-byte commands
+      Buffer.from([0x02, 0x00]),
+      Buffer.from([0x00, 0x00]),
+      Buffer.from([0x00, 0x01]),
+      Buffer.from([0x00, 0xFF]),
+      Buffer.from([0x01, 0x02]),
+      Buffer.from([0x03, 0x01]),
+      Buffer.from([0x00, 0x80]),
+      Buffer.from([0x80, 0x00]),
+      Buffer.from([0x10]),             // JBL specific
+      Buffer.from([0x20]),
+      Buffer.from([0x30]),
+      Buffer.from([0x40]),
+      Buffer.from([0x50]),
+      Buffer.from([0x60]),
+      Buffer.from([0x70]),
+      Buffer.from([0x80]),
+      Buffer.from([0x90]),
+      Buffer.from([0xA0]),
+      Buffer.from([0xB0]),
+      Buffer.from([0xC0]),
+      Buffer.from([0xD0]),
+      Buffer.from([0xE0]),
+      Buffer.from([0xF0])
+    ];
+
+    let commandIndex = 0;
+    let floodInterval;
+    let isConnected = false;
+    let writableCharacteristics = [];
+
+    // Функция для запуска флуда
+    function startFlood() {
+      console.log(`Starting flood with ${floodCommands.length} commands for 10 seconds...`);
+      
+      floodInterval = setInterval(() => {
+        if (commandIndex >= floodCommands.length) {
+          commandIndex = 0; // Зацикливаем команды
+        }
+
+        const cmd = floodCommands[commandIndex];
+        
+        // Пишем во все writable характеристики
+        writableCharacteristics.forEach((char, index) => {
+          const useWithoutResponse = char.properties.includes('writeWithoutResponse');
+          
+          try {
+            char.write(cmd, useWithoutResponse, (error) => {
+              if (error) {
+                console.error(`Flood command ${commandIndex} failed on char ${index}:`, error.message);
+              } else {
+                console.log(`Flood command ${commandIndex} (${cmd.toString('hex')}) sent to ${char.uuid}`);
+              }
+            });
+          } catch (err) {
+            console.error(`Error writing to characteristic ${char.uuid}:`, err.message);
+          }
+        });
+        
+        commandIndex++;
+      }, 100); // Каждые 100мс новая команда
+    }
+
+    // Подключаемся к устройству
+    if (peripheral.state === 'connected') {
+      isConnected = true;
+      console.log(`Device ${mac} already connected`);
+      return prepareDevice();
+    }
+
+    console.log(`Connecting to ${mac}...`);
+    peripheral.connect((error) => {
+      if (error) {
+        console.error(`Failed to connect to ${mac}:`, error);
+        return res.status(500).json({ 
+          error: "Connection failed", 
+          message: `Failed to connect to ${mac}: ${error.message}` 
+        });
+      }
+
+      isConnected = true;
+      console.log(`Successfully connected to ${mac}`);
+      prepareDevice();
+    });
+
+    function prepareDevice() {
+      // Находим все writable характеристики
+      peripheral.discoverServices([], (error, services) => {
+        if (error) {
+          console.error('Service discovery failed:', error);
+          return cleanup();
+        }
+
+        let servicesProcessed = 0;
+        let allCharacteristics = [];
+
+        services.forEach(service => {
+          service.discoverCharacteristics([], (error, characteristics) => {
+            if (error) {
+              console.error('Characteristic discovery failed:', error);
+              servicesProcessed++;
+              if (servicesProcessed === services.length) {
+                if (writableCharacteristics.length === 0) {
+                  console.log('No writable characteristics found');
+                  return cleanup();
+                }
+                startFlood();
+              }
+              return;
+            }
+
+            allCharacteristics.push(...characteristics);
+            servicesProcessed++;
+
+            if (servicesProcessed === services.length) {
+              // Фильтруем writable характеристики
+              writableCharacteristics = allCharacteristics.filter(char => 
+                char.properties.includes('write') || char.properties.includes('writeWithoutResponse')
+              );
+
+              console.log(`Found ${writableCharacteristics.length} writable characteristics for flood:`);
+              writableCharacteristics.forEach((char, index) => {
+                console.log(`  ${index + 1}. ${char.uuid} - ${char.properties.join(', ')}`);
+              });
+
+              if (writableCharacteristics.length === 0) {
+                console.log('No writable characteristics found');
+                return cleanup();
+              }
+
+              startFlood();
+            }
+          });
+        });
+      });
+    }
+
+    function cleanup() {
+      console.log(`Cleaning up flood session for ${mac}...`);
+      
+      if (floodInterval) {
+        clearInterval(floodInterval);
+        floodInterval = null;
+      }
+
+      if (isConnected && peripheral) {
+        try {
+          peripheral.disconnect();
+          console.log(`Disconnected from ${mac}`);
+        } catch (err) {
+          console.error(`Error disconnecting from ${mac}:`, err.message);
+        }
+      }
+
+      res.json({ 
+        status: "flood_completed", 
+        mac: mac,
+        message: `Flood session completed for ${mac}` 
+      });
+    }
+
+    // Автоматическое отключение через 10 секунд
+    setTimeout(() => {
+      console.log('10 seconds elapsed, stopping flood...');
+      cleanup();
+    }, 10000);
+
+  } catch (error) {
+    console.error(`Error during flood for ${mac}:`, error);
+    res.status(500).json({ 
+      error: "Flood error", 
+      message: `Error during flood for ${mac}: ${error.message}` 
+    });
+  }
+}
+
 // Export functions and data
 module.exports = {
   setupNobleEvents,
   handleDevicePreparation,
   sendVolumeCommand,
   disconnectDevice,
+  floodVolumeCommands,
   connectedDevices,
   devices,
   history,
