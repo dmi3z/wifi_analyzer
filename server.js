@@ -550,6 +550,11 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
 
                 console.log(`Found ${services.length} services for ${mac}`);
                 
+                // Выводим все найденные сервисы
+                services.forEach((service, index) => {
+                  console.log(`Service ${index + 1}: ${service.uuid}`);
+                });
+                
                 // Ищем сервисы, связанные с аудио
                 const audioServices = services.filter(service => {
                   const uuid = service.uuid.toLowerCase();
@@ -590,6 +595,11 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
                   }
 
                   console.log(`Found ${characteristics.length} characteristics`);
+                  
+                  // Выводим все найденные характеристики
+                  characteristics.forEach((char, index) => {
+                    console.log(`Characteristic ${index + 1}: ${char.uuid} - Properties: ${char.properties.join(', ')}`);
+                  });
                   
                   // Ищем характеристики для записи (свойство write)
                   const writableCharacteristics = characteristics.filter(char => 
