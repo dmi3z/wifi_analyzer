@@ -569,6 +569,31 @@ app.post("/bluetooth/connect-disconnect-loop/:mac", async (req, res) => {
         
         console.log(`Найдено устройство в Noble кеше: ${peripheral.address}`);
         
+        // Проверяем состояние подключения
+        if (peripheral.state === 'connected') {
+          console.log(`Устройство ${mac} уже подключено, сразу запускаем детектор...`);
+          
+          // Ждем немного чтобы устройство зарегистрировалось в BlueZ
+          setTimeout(() => {
+            // Запускаем детектор для конкретного устройства
+            detector(devicePath).catch((err) => {
+              console.error(`Ошибка запуска детектора для ${mac}:`, err);
+            });
+            
+            // Запускаем цикл в фоне
+            connectDisconnectLoop(mac.replace(/:/g, ''));
+            
+            res.json({ 
+              status: "loop_started", 
+              mac: mac,
+              devicePath: devicePath,
+              message: `Connect/disconnect loop and monitoring started for ${mac} (device already connected)` 
+            });
+          }, 2000);
+          
+          return;
+        }
+        
         // Подключаемся чтобы зарегистрировать в BlueZ
         peripheral.connect((error) => {
           if (error) {
