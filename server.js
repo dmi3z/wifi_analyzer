@@ -15,6 +15,138 @@ const PORT = 3000;
 const ouiText = fs.readFileSync("oui.txt", "utf8");
 const ouiMap = {};
 
+/// ------
+
+const dbus = require("dbus-next");
+const { Variant } = dbus;
+let counter = 0;
+
+const bus = dbus.systemBus();
+const interfaceName = "org.bluez.Device1";
+const BLUEZ = "org.bluez";
+const PROPS = "org.freedesktop.DBus.Properties";
+
+function now() {
+  return new Date().toISOString();
+}
+
+async function detector(devicePath) {
+  try {
+    console.log(`[${now()}] Мониторинг устройства ${devicePath}`);
+    
+    const obj = await bus.getProxyObject(BLUEZ, devicePath);
+    const device = obj.getInterface("org.bluez.Device1");
+    const props = obj.getInterface(PROPS);
+
+    // --- Текущее состояние ---
+    const connected = await props.Get("org.bluez.Device1", "Connected");
+    const uuids = await props.Get("org.bluez.Device1", "UUIDs");
+
+    console.log(`[${now()}] Connected:`, connected.value);
+    console.log(`[${now()}] UUIDs:`, uuids.value);
+
+    if (uuids.value.includes("0000110b-0000-1000-8000-00805f9b34fb")) {
+      console.log(`[${now()}] A2DP Sink поддерживается`);
+    }
+
+    // --- Слушаем изменения ---
+    props.on("PropertiesChanged", (iface, changed) => {
+      if (iface !== "org.bluez.Device1") return;
+
+      if ("Connected" in changed) {
+        const val = changed.Connected.value;
+        console.log(`[${now()}] Connected changed -> ${val}`);
+
+        if (!val) {
+          console.log(`[${now()}] ⚠️ Возможный ОБРЫВ звука (disconnect)`);
+        } else {
+          console.log(`[${now()}] 🔌 Переподключение`);
+        }
+      }
+
+      if ("UUIDs" in changed) {
+        console.log(`[${now()}] UUIDs updated:`, changed.UUIDs.value);
+      }
+    });
+
+    // --- Глобальный монитор транспорта ---
+    bus.addMatch(
+      "type='signal',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged'",
+    );
+
+    bus.on("message", (msg) => {
+      if (msg.interface !== PROPS || msg.member !== "PropertiesChanged") return;
+
+      const [iface, changed] = msg.body;
+
+      if (iface !== "org.bluez.MediaTransport1") return;
+
+      if ("State" in changed) {
+        const state = changed.State.value;
+
+        console.log(`[${now()}] A2DP Transport State -> ${state}`);
+
+        if (state === "idle") {
+          console.log(`[${now()}] ⚠️ Аудио остановлено`);
+        }
+
+        if (state === "active") {
+          console.log(`[${now()}] ▶️ Идёт аудио поток`);
+        }
+
+        if (state === "pending") {
+          console.log(`[${now()}] ⏳ Переключение / возможный лаг`);
+        }
+      }
+    });
+
+    console.log(`[${now()}] Мониторинг устройства ${devicePath} запущен`);
+  } catch (error) {
+    console.error(`[${now()}] Ошибка запуска детектора для ${devicePath}:`, error);
+  }
+}
+
+async function connectDisconnectLoop(mac) {
+  try {
+    const obj = await bus.getProxyObject("org.bluez", "/org/bluez/hci0/" + mac);
+    const device = obj.getInterface(interfaceName);
+
+    console.log("Начало цикла connect/disconnect...");
+
+    while (counter !== 10) {
+      console.log("Попытка подключиться...");
+      try {
+        await device.Connect();
+      } catch (e) {
+        /* игнорируем ошибки */
+      }
+
+      // Подождать 1 секунду
+      await new Promise((r) => setTimeout(r, 1000));
+
+      console.log("Отключение...");
+      try {
+        await device.Disconnect();
+      } catch (e) {
+        /* игнорируем ошибки */
+      }
+
+      // Подождать 1 секунду
+      await new Promise((r) => setTimeout(r, 1000));
+
+      counter++;
+    }
+
+    console.log("Конец цикла connect/disconnect...");
+  } catch (err) {
+    console.error("Ошибка при подключении к D-Bus:", err);
+  }
+}
+
+connectDisconnectLoop();
+
+///// =======
+
 ouiText.split("\n").forEach((line) => {
   const m = line.match(
     /^([0-9A-F]{2}-[0-9A-F]{2}-[0-9A-F]{2})\s+\(hex\)\s+(.+)/i,
@@ -88,91 +220,112 @@ app.delete("/devices", (req, res) => {
 // Подключение к Bluetooth устройству по MAC адресу
 app.post("/bluetooth/connect/:mac", async (req, res) => {
   const mac = req.params.mac.toLowerCase();
-  
+
   try {
     // Найти устройство среди обнаруженных
-    const device = Object.values(bluetooth.devices).find(d => d.mac.toLowerCase() === mac);
-    
+    const device = Object.values(bluetooth.devices).find(
+      (d) => d.mac.toLowerCase() === mac,
+    );
+
     if (!device) {
-      return res.status(404).json({ 
-        error: "Device not found", 
-        message: "Device not found" 
+      return res.status(404).json({
+        error: "Device not found",
+        message: "Device not found",
       });
     }
 
     // Попытка найти и подключиться к peripheral
     // Сначала проверяем в _peripherals
     let peripheral = bluetooth.noble._peripherals[mac];
-    
+
     if (!peripheral) {
       // Если не нашли, попробуем найти через startScanning и ждать discovery
       console.log(`Device ${mac} not in _peripherals, starting scan...`);
-      console.log('Available peripherals:', Object.keys(bluetooth.noble._peripherals));
-      
+      console.log(
+        "Available peripherals:",
+        Object.keys(bluetooth.noble._peripherals),
+      );
+
       const timeout = setTimeout(() => {
         bluetooth.noble.stopScanning();
-        bluetooth.noble.removeListener('discover', onDiscover);
+        bluetooth.noble.removeListener("discover", onDiscover);
         console.log(`Scan timeout for ${mac}`);
-        return res.status(404).json({ 
-          error: "Device not found after scanning", 
-          message: `Device ${mac} not found after 5 seconds of scanning` 
+        return res.status(404).json({
+          error: "Device not found after scanning",
+          message: `Device ${mac} not found after 5 seconds of scanning`,
         });
       }, 5000);
 
       const onDiscover = (peripheral) => {
-        console.log(`Discovered device: ${peripheral.address} (looking for ${mac})`);
+        console.log(
+          `Discovered device: ${peripheral.address} (looking for ${mac})`,
+        );
         if (peripheral.address.toLowerCase() === mac) {
           clearTimeout(timeout);
-          bluetooth.noble.removeListener('discover', onDiscover);
+          bluetooth.noble.removeListener("discover", onDiscover);
           bluetooth.noble.stopScanning();
-          
+
           console.log(`Found target device ${mac}, attempting connection...`);
-            
-            // Если peripheral найден, подключаемся напрямую
-      // Проверяем состояние подключения
-      if (peripheral.state === 'connected') {
-        console.log(`Device ${mac} already connected, checking preparation...`);
-        
-        // Проверяем, готово ли устройство
-        const connectedInfo = bluetooth.connectedDevices.get(mac);
-        if (!connectedInfo || !connectedInfo.writableCharacteristics) {
-          // Устройство еще не готово, запускаем подготовку
-          return bluetooth.handleDevicePreparation(peripheral, mac, device, res);
-        } else {
-          // Устройство уже готово к командам
-          console.log(`Device ${mac} already prepared, ready for commands`);
-          res.json({ 
-            status: "connected", 
-            mac: mac,
-            device: device,
-            message: `Successfully connected to ${mac} (ready for volume commands)` 
-          });
-        }
-      }
-            
-            peripheral.connect((error) => {
+
+          // Если peripheral найден, подключаемся напрямую
+          // Проверяем состояние подключения
+          if (peripheral.state === "connected") {
+            console.log(
+              `Device ${mac} already connected, checking preparation...`,
+            );
+
+            // Проверяем, готово ли устройство
+            const connectedInfo = bluetooth.connectedDevices.get(mac);
+            if (!connectedInfo || !connectedInfo.writableCharacteristics) {
+              // Устройство еще не готово, запускаем подготовку
+              return bluetooth.handleDevicePreparation(
+                peripheral,
+                mac,
+                device,
+                res,
+              );
+            } else {
+              // Устройство уже готово к командам
+              console.log(`Device ${mac} already prepared, ready for commands`);
+              res.json({
+                status: "connected",
+                mac: mac,
+                device: device,
+                message: `Successfully connected to ${mac} (ready for volume commands)`,
+              });
+            }
+          }
+
+          peripheral.connect((error) => {
             if (error) {
               console.error(`Connection error for ${mac}:`, error);
-              return res.status(500).json({ 
-                error: "Connection failed", 
-                message: `Connection failed to ${mac}: ${error.message}` 
+              return res.status(500).json({
+                error: "Connection failed",
+                message: `Connection failed to ${mac}: ${error.message}`,
               });
             } else {
               console.log(`Successfully connected to ${mac}`);
-              
+
               // После успешного подключения подготавливаем устройство для управления громкостью
               // только если это первое подключение
               const connectedInfo = bluetooth.connectedDevices.get(mac);
               if (!connectedInfo || !connectedInfo.writableCharacteristics) {
-                return bluetooth.handleDevicePreparation(peripheral, mac, device, res);
+                return bluetooth.handleDevicePreparation(
+                  peripheral,
+                  mac,
+                  device,
+                  res,
+                );
               } else {
                 // Устройство уже готово к командам
-                console.log(`Device ${mac} already prepared, ready for commands`);
-                res.json({ 
-                  status: "connected", 
+                console.log(
+                  `Device ${mac} already prepared, ready for commands`,
+                );
+                res.json({
+                  status: "connected",
                   mac: mac,
                   device: device,
-                  message: `Successfully connected to ${mac} (ready for volume commands)` 
+                  message: `Successfully connected to ${mac} (ready for volume commands)`,
                 });
               }
             }
@@ -180,44 +333,46 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
         }
       };
 
-      bluetooth.noble.on('discover', onDiscover);
-      
+      bluetooth.noble.on("discover", onDiscover);
+
       // Убедимся что сканирование запущено
-      if (bluetooth.noble.state === 'poweredOn') {
+      if (bluetooth.noble.state === "poweredOn") {
         bluetooth.noble.startScanning([], true);
-        console.log('Started scanning for all devices');
+        console.log("Started scanning for all devices");
       } else {
         clearTimeout(timeout);
-        bluetooth.noble.removeListener('discover', onDiscover);
+        bluetooth.noble.removeListener("discover", onDiscover);
         bluetooth.noble.stopScanning();
-        console.log('Bluetooth not powered on, state:', bluetooth.noble.state);
-        return res.status(500).json({ 
-          error: "Bluetooth not powered on", 
-          message: `Bluetooth state: ${bluetooth.noble.state}` 
+        console.log("Bluetooth not powered on, state:", bluetooth.noble.state);
+        return res.status(500).json({
+          error: "Bluetooth not powered on",
+          message: `Bluetooth state: ${bluetooth.noble.state}`,
         });
       }
-      
+
       return; // Выходим из функции, ждем асинхронные колбэки
     }
 
     // Если peripheral найден, подключаемся напрямую
-      // Проверяем состояние подключения
-      if (peripheral.state === 'connected') {
-        console.log(`Device ${mac} already connected, attempting device preparation...`);
-        
-        // Устройство уже подключено, подготавливаем его для управления громкостью
-        return bluetooth.handleDevicePreparation(peripheral, mac, device, res);
-      }
-      
-      peripheral.connect((error) => {
+    // Проверяем состояние подключения
+    if (peripheral.state === "connected") {
+      console.log(
+        `Device ${mac} already connected, attempting device preparation...`,
+      );
+
+      // Устройство уже подключено, подготавливаем его для управления громкостью
+      return bluetooth.handleDevicePreparation(peripheral, mac, device, res);
+    }
+
+    peripheral.connect((error) => {
       if (error) {
         console.error(`Failed to connect to ${mac}:`, error);
-        return res.status(500).json({ 
-          error: "Connection failed", 
-          message: `Connection failed to ${mac}: ${error.message}` 
+        return res.status(500).json({
+          error: "Connection failed",
+          message: `Connection failed to ${mac}: ${error.message}`,
         });
       }
-      
+
       // После успешного подключения проверяем, нужно ли готовить устройство
       const connectedInfo = bluetooth.connectedDevices.get(mac);
       if (!connectedInfo || !connectedInfo.writableCharacteristics) {
@@ -226,19 +381,19 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
       } else {
         // Устройство уже готово к командам
         console.log(`Device ${mac} already prepared, ready for commands`);
-        res.json({ 
-          status: "connected", 
+        res.json({
+          status: "connected",
           mac: mac,
           device: device,
-          message: `Successfully connected to ${mac} (ready for volume commands)` 
+          message: `Successfully connected to ${mac} (ready for volume commands)`,
         });
       }
     });
   } catch (error) {
     console.error(`Error connecting to ${mac}:`, error);
-    res.status(500).json({ 
-      error: "Connection error", 
-      message: `Error connecting to ${mac}: ${error.message}` 
+    res.status(500).json({
+      error: "Connection error",
+      message: `Error connecting to ${mac}: ${error.message}`,
     });
   }
 });
@@ -259,6 +414,37 @@ app.post("/bluetooth/disconnect/:mac", async (req, res) => {
 app.post("/bluetooth/volume/:mac/flood", async (req, res) => {
   const mac = req.params.mac.toLowerCase();
   bluetooth.floodVolumeCommands(mac, res);
+});
+
+// Connect/Disconnect loop testing
+app.post("/bluetooth/connect-disconnect-loop/:mac", async (req, res) => {
+  const mac = req.params.mac.toLowerCase();
+  const devicePath = `/org/bluez/hci0/${mac.replace(/:/g, '')}`;
+  
+  try {
+    console.log(`Starting connect/disconnect loop for ${mac}...`);
+    
+    // Запускаем детектор для конкретного устройства
+    detector(devicePath).catch((err) => {
+      console.error(`Ошибка запуска детектора для ${mac}:`, err);
+    });
+    
+    // Запускаем цикл в фоне
+    connectDisconnectLoop(mac.replace(/:/g, ''));
+    
+    res.json({ 
+      status: "loop_started", 
+      mac: mac,
+      devicePath: devicePath,
+      message: `Connect/disconnect loop and monitoring started for ${mac}` 
+    });
+  } catch (error) {
+    console.error(`Error starting loop for ${mac}:`, error);
+    res.status(500).json({ 
+      error: "Loop start failed", 
+      message: `Error starting loop for ${mac}: ${error.message}` 
+    });
+  }
 });
 
 // --- BTMON ---
