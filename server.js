@@ -432,19 +432,19 @@ app.post("/bluetooth/volume/:mac/flood", async (req, res) => {
   bluetooth.floodVolumeCommands(mac, res);
 });
 
-// Connect/Disconnect loop testing
+// Connect/Disconnect loop testing (A2DP D-Bus version)
 app.post("/bluetooth/connect-disconnect-loop/:mac", async (req, res) => {
   const mac = req.params.mac.toLowerCase();
   const devicePath = `/org/bluez/hci0/${mac.replace(/:/g, '')}`;
   
   try {
-    console.log(`Starting connect/disconnect loop for ${mac}...`);
+    console.log(`Starting A2DP connect/disconnect loop for ${mac}...`);
     
-    // Сначала проверим доступные устройства
+    // Сначала проверим доступные устройства в BlueZ
     console.log("Проверка доступных устройств в BlueZ...");
     
     try {
-      // Простой метод - пробуем получить интерфейс напрямую
+      // Пробуем получить интерфейс напрямую
       console.log(`Проверка устройства ${devicePath} в BlueZ...`);
       
       try {
@@ -457,200 +457,131 @@ app.post("/bluetooth/connect-disconnect-loop/:mac", async (req, res) => {
           console.error(`Ошибка запуска детектора для ${mac}:`, err);
         });
         
-        // Запускаем цикл в фоне
-        connectDisconnectLoop(mac.replace(/:/g, ''));
+        // Запускаем A2DP цикл в фоне
+        connectDisconnectLoopA2DP(mac, devicePath);
         
         res.json({ 
           status: "loop_started", 
           mac: mac,
           devicePath: devicePath,
-          message: `Connect/disconnect loop and monitoring started for ${mac}` 
+          mode: "A2DP-D-Bus",
+          message: `A2DP connect/disconnect loop and monitoring started for ${mac}` 
         });
         
         return;
         
       } catch (deviceError) {
         console.log(`Устройство ${mac} не найдено в BlueZ: ${deviceError.message}`);
-        console.log(`Пробуем сначала подключиться через Noble...`);
+        console.log(`Пробуем сначала подключиться через BLE чтобы зарегистрировать в BlueZ...`);
         
-        // Пробуем подключиться через Noble чтобы зарегистрировать устройство
+        // Сначала подключаемся через Noble/BLE чтобы зарегистрировать в BlueZ
         const noble = require("@abandonware/noble");
         let peripheral = noble._peripherals[mac];
         
         if (!peripheral) {
-          console.log(`Устройство ${mac} не в кеше Noble, проверяем подключенные устройства...`);
+          console.log(`Устройство ${mac} не в кеше Noble, запускаем сканирование...`);
           
-          // Проверяем все подключенные устройства
-          const connectedPeripherals = Object.values(noble._peripherals).filter(p => p.state === 'connected');
-          console.log(`Подключенные устройства: ${connectedPeripherals.map(p => p.address).join(', ')}`);
+          if (noble.state !== 'poweredOn') {
+            return res.status(500).json({
+              error: "Bluetooth not ready",
+              message: `Bluetooth state: ${noble.state}. Please check Bluetooth adapter.`
+            });
+          }
           
-          // Ищем среди подключенных
-          const connectedDevice = connectedPeripherals.find(p => p.address.toLowerCase() === mac);
+          let scanTimeout;
+          let found = false;
           
-          if (connectedDevice) {
-            console.log(`Найдено подключенное устройство: ${connectedDevice.address}`);
-            peripheral = connectedDevice;
-          } else {
-            console.log(`Устройство ${mac} не в кеше Noble, запускаем сканирование...`);
-            
-            if (noble.state !== 'poweredOn') {
-              return res.status(500).json({
-                error: "Bluetooth not ready",
-                message: `Bluetooth state: ${noble.state}. Please check Bluetooth adapter.`
-              });
-            }
-            
-            let scanTimeout;
-            let found = false;
-            
-            const onDiscover = (p) => {
-              console.log(`Scanning discovered: ${p.address} (looking for ${mac})`);
-              if (p.address.toLowerCase() === mac) {
-                found = true;
-                peripheral = p;
-                clearTimeout(scanTimeout);
-                noble.removeListener('discover', onDiscover);
-                noble.stopScanning();
-                console.log(`Found target device ${mac} during scan`);
-                
-                // Подключаемся чтобы зарегистрировать в BlueZ
-                peripheral.connect((error) => {
-                  if (error) {
-                    console.error(`Не удалось подключиться к ${mac}:`, error);
-                    return res.status(500).json({
-                      error: "Connection failed",
-                      message: `Failed to connect to ${mac}: ${error.message}`
-                    });
-                  }
-                  
-                  console.log(`Подключились к ${mac}, теперь пробуем запустить цикл...`);
-                  
-                  // Ждем немного чтобы устройство зарегистрировалось в BlueZ
-                  setTimeout(() => {
-                    // Запускаем детектор для конкретного устройства
-                    detector(devicePath).catch((err) => {
-                      console.error(`Ошибка запуска детектора для ${mac}:`, err);
-                    });
-                    
-                    // Запускаем цикл в фоне
-                    connectDisconnectLoop(mac.replace(/:/g, ''));
-                    
-                    res.json({ 
-                      status: "loop_started", 
-                      mac: mac,
-                      devicePath: devicePath,
-                      message: `Connect/disconnect loop and monitoring started for ${mac}` 
-                    });
-                  }, 2000);
-                });
-              }
-            };
-            
-            scanTimeout = setTimeout(() => {
+          const onDiscover = (p) => {
+            console.log(`Scanning discovered: ${p.address} (looking for ${mac})`);
+            if (p.address.toLowerCase() === mac) {
+              found = true;
+              peripheral = p;
+              clearTimeout(scanTimeout);
               noble.removeListener('discover', onDiscover);
               noble.stopScanning();
-              console.log(`Scan timeout for ${mac}`);
+              console.log(`Found target device ${mac} during scan`);
               
-              return res.status(404).json({
-                error: "Device not found",
-                message: `Device ${mac} not found after 5 seconds of scanning. Please make sure device is powered on and within range.`,
-                suggestion: "Try connecting to the device first using /bluetooth/connect/:mac endpoint"
+              // Подключаемся через BLE чтобы зарегистрировать в BlueZ
+              peripheral.connect((error) => {
+                if (error) {
+                  console.error(`Не удалось подключиться к ${mac}:`, error);
+                  return res.status(500).json({
+                    error: "Connection failed",
+                    message: `Failed to connect to ${mac}: ${error.message}`
+                  });
+                }
+                
+                console.log(`Подключились через BLE к ${mac}, теперь пробуем A2DP...`);
+                
+                // Ждем регистрации в BlueZ и запускаем A2DP цикл
+                setTimeout(() => {
+                  // Запускаем детектор для конкретного устройства
+                  detector(devicePath).catch((err) => {
+                    console.error(`Ошибка запуска детектора для ${mac}:`, err);
+                  });
+                  
+                  // Запускаем A2DP цикл в фоне
+                  connectDisconnectLoopA2DP(mac, devicePath);
+                  
+                  res.json({ 
+                    status: "loop_started", 
+                    mac: mac,
+                    devicePath: devicePath,
+                    mode: "A2DP-D-Bus",
+                    message: `A2DP connect/disconnect loop and monitoring started for ${mac} (BLE registration complete)` 
+                  });
+                }, 3000); // Дольше ждем регистрации A2DP
               });
-            }, 5000);
+            }
+          };
+          
+          scanTimeout = setTimeout(() => {
+            noble.removeListener('discover', onDiscover);
+            noble.stopScanning();
+            console.log(`Scan timeout for ${mac}`);
             
-            noble.on('discover', onDiscover);
-            noble.startScanning([], true);
-            console.log(`Started scanning for device ${mac}...`);
-            
-            return; // Ждем сканирование
-          }
+            return res.status(404).json({
+              error: "Device not found",
+              message: `Device ${mac} not found after 5 seconds of scanning. Please make sure device is powered on and within range.`
+            });
+          }, 5000);
+          
+          noble.on('discover', onDiscover);
+          noble.startScanning([], true);
+          console.log(`Started scanning for device ${mac}...`);
+          
+          return; // Ждем сканирование
         }
         
         console.log(`Найдено устройство в Noble кеше: ${peripheral.address}`);
         
         // Проверяем состояние подключения
         if (peripheral.state === 'connected') {
-          console.log(`Устройство ${mac} уже подключено, ищем правильный путь в BlueZ...`);
+          console.log(`Устройство ${mac} уже подключено через BLE, запускаем A2DP...`);
           
-          // Ищем правильный путь устройства в BlueZ
-          try {
-            // Пробуем разные варианты пути
-            const possiblePaths = [
-              `/org/bluez/hci0/${mac.replace(/:/g, '')}`,
-              `/org/bluez/hci0/dev_${mac.replace(/:/g, '').toUpperCase()}`,
-              `/org/bluez/hci0/${mac}`,
-              `/org/bluez/hci0/dev_${mac.replace(/:/g, '')}`
-            ];
+          // Ждем регистрации в BlueZ и запускаем A2DP цикл
+          setTimeout(() => {
+            // Запускаем детектор для конкретного устройства
+            detector(devicePath).catch((err) => {
+              console.error(`Ошибка запуска детектора для ${mac}:`, err);
+            });
             
-            let foundPath = null;
-            
-            for (const path of possiblePaths) {
-              try {
-                console.log(`Пробуем путь: ${path}`);
-                const testObj = await bus.getProxyObject(BLUEZ, path);
-                const testDevice = testObj.getInterface("org.bluez.Device1");
-                foundPath = path;
-                console.log(`Найден правильный путь: ${path}`);
-                break;
-              } catch (err) {
-                console.log(`Путь ${path} не работает: ${err.message}`);
-              }
-            }
-            
-            if (foundPath) {
-              // Ждем немного чтобы устройство зарегистрировалось в BlueZ
-              setTimeout(() => {
-                // Запускаем детектор для конкретного устройства
-                detector(foundPath).catch((err) => {
-                  console.error(`Ошибка запуска детектора для ${mac}:`, err);
-                });
-                
-                // Запускаем цикл в фоне
-                connectDisconnectLoop(mac.replace(/:/g, ''));
-                
-                res.json({ 
-                  status: "loop_started", 
-                  mac: mac,
-                  devicePath: foundPath,
-                  message: `Connect/disconnect loop and monitoring started for ${mac} (device already connected)` 
-                });
-              }, 2000);
-              
-              return;
-            } else {
-              console.log(`Не найден путь в BlueZ, используем Noble напрямую...`);
-              
-              // Запускаем цикл через Noble
-              connectDisconnectLoop(mac.replace(/:/g, ''));
-              
-              res.json({ 
-                status: "loop_started", 
-                mac: mac,
-                devicePath: "Noble-only",
-                message: `Connect/disconnect loop started for ${mac} (Noble mode, no BlueZ monitoring)` 
-              });
-              
-              return;
-            }
-            
-          } catch (searchError) {
-            console.error(`Ошибка поиска пути в BlueZ:`, searchError.message);
-            
-            // Запускаем цикл через Noble
-            connectDisconnectLoop(mac.replace(/:/g, ''));
+            // Запускаем A2DP цикл в фоне
+            connectDisconnectLoopA2DP(mac, devicePath);
             
             res.json({ 
               status: "loop_started", 
               mac: mac,
-              devicePath: "Noble-only",
-              message: `Connect/disconnect loop started for ${mac} (Noble mode, no BlueZ monitoring)` 
+              devicePath: devicePath,
+              mode: "A2DP-D-Bus",
+              message: `A2DP connect/disconnect loop and monitoring started for ${mac} (BLE already connected)` 
             });
-            
-            return;
-          }
+          }, 3000);
+          
+          return;
         }
         
-        // Подключаемся чтобы зарегистрировать в BlueZ
+        // Подключаемся через BLE чтобы зарегистрировать в BlueZ
         peripheral.connect((error) => {
           if (error) {
             console.error(`Не удалось подключиться к ${mac}:`, error);
@@ -660,25 +591,25 @@ app.post("/bluetooth/connect-disconnect-loop/:mac", async (req, res) => {
             });
           }
           
-          console.log(`Подключились к ${mac}, теперь пробуем запустить цикл...`);
+          console.log(`Подключились через BLE к ${mac}, теперь пробуем A2DP...`);
           
-          // Ждем немного чтобы устройство зарегистрировалось в BlueZ
+          // Ждем регистрации в BlueZ и запускаем A2DP цикл
           setTimeout(() => {
             // Запускаем детектор для конкретного устройства
             detector(devicePath).catch((err) => {
               console.error(`Ошибка запуска детектора для ${mac}:`, err);
             });
             
-            // Запускаем цикл в фоне
-            connectDisconnectLoop(mac.replace(/:/g, ''));
+            // Запускаем A2DP цикл в фоне
+            connectDisconnectLoopA2DP(mac, devicePath);
             
             res.json({ 
               status: "loop_started", 
               mac: mac,
               devicePath: devicePath,
-              message: `Connect/disconnect loop and monitoring started for ${mac}` 
+              message: `A2DP connect/disconnect loop and monitoring started for ${mac}` 
             });
-          }, 2000);
+          }, 3000); // Дольше ждем регистрации A2DP
         });
         
         return; // Ждем подключения
@@ -693,13 +624,69 @@ app.post("/bluetooth/connect-disconnect-loop/:mac", async (req, res) => {
     }
     
   } catch (error) {
-    console.error(`Error starting loop for ${mac}:`, error);
+    console.error(`Error starting A2DP loop for ${mac}:`, error);
     res.status(500).json({ 
       error: "Loop start failed", 
-      message: `Error starting loop for ${mac}: ${error.message}` 
+      message: `Error starting A2DP loop for ${mac}: ${error.message}` 
     });
   }
 });
+
+// A2DP D-Bus connect/disconnect loop
+async function connectDisconnectLoopA2DP(mac, devicePath) {
+  try {
+    console.log(`Начинаем A2DP цикл connect/disconnect для ${mac}...`);
+    
+    let counter = 0;
+    const maxIterations = 10;
+    
+    const loop = async () => {
+      if (counter >= maxIterations) {
+        console.log(`Завершение A2DP цикла после ${maxIterations} итераций`);
+        return;
+      }
+      
+      console.log(`A2DP Итерация ${counter + 1}/${maxIterations}`);
+      
+      try {
+        // Получаем интерфейс устройства
+        const obj = await bus.getProxyObject(BLUEZ, devicePath);
+        const device = obj.getInterface("org.bluez.Device1");
+        
+        // Отключаемся если подключены
+        try {
+          console.log(`Отключаем A2DP от ${mac}...`);
+          await device.Disconnect();
+          console.log(`A2DP отключен от ${mac}`);
+        } catch (disconnectError) {
+          console.log(`Устройство уже было отключено: ${disconnectError.message}`);
+        }
+        
+        // Пауза
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Подключаемся
+        console.log(`Подключаем A2DP к ${mac}...`);
+        await device.Connect();
+        console.log(`A2DP подключен к ${mac}`);
+        
+        counter++;
+        setTimeout(loop, 3000); // Пауза 3 секунды между итерациями
+        
+      } catch (error) {
+        console.error(`Ошибка в A2DP итерации ${counter}:`, error.message);
+        counter++;
+        setTimeout(loop, 3000);
+      }
+    };
+    
+    // Запускаем цикл
+    setTimeout(loop, 1000);
+    
+  } catch (error) {
+    console.error(`Ошибка в A2DP цикле для ${mac}:`, error);
+  }
+}
 
 // Показать доступные устройства в BlueZ
 app.get("/bluetooth/bluez-devices", async (req, res) => {
