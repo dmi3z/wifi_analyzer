@@ -143,8 +143,6 @@ async function connectDisconnectLoop(mac) {
   }
 }
 
-connectDisconnectLoop();
-
 ///// =======
 
 ouiText.split("\n").forEach((line) => {
