@@ -211,19 +211,40 @@ setInterval(() => {
 // SSE endpoint
 app.get("/events", (req, res) => {
   try {
+    console.log(`[${now()}] Новый SSE запрос...`);
+    
+    // Устанавливаем таймаут сразу
+    req.setTimeout(5000, () => {
+      console.log(`[${now()}] SSE таймаут, закрываем соединение`);
+      if (!res.headersSent) {
+        res.status(408).json({ error: "Request timeout" });
+      } else {
+        res.end();
+      }
+    });
+    
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Headers", "Cache-Control");
     
+    console.log(`[${now()}] Заголовки установлены`);
+    
+    // Проверяем, что соединение еще живо
+    if (res.destroyed) {
+      console.log(`[${now()}] Соединение уже закрыто`);
+      return;
+    }
+    
     // Отправляем начальное сообщение
     res.write("data: connected\n\n");
     res.flush();
     
-    bluetooth.clients.push(res);
+    console.log(`[${now()}] Начальное сообщение отправлено`);
     
-    console.log(`[${now()}] SSE клиент подключен, всего клиентов: ${bluetooth.clients.length}`);
+    bluetooth.clients.push(res);
+    console.log(`[${now()}] SSE клиент добавлен, всего клиентов: ${bluetooth.clients.length}`);
     
     req.on("close", () => {
       bluetooth.clients = bluetooth.clients.filter((c) => c !== res);
@@ -235,19 +256,25 @@ app.get("/events", (req, res) => {
       bluetooth.clients = bluetooth.clients.filter((c) => c !== res);
     });
     
-    // Таймаут для предотвращения бесконечного подключения
-    req.setTimeout(30000, () => {
-      console.log(`[${now()}] SSE таймаут для клиента`);
-      if (!res.destroyed) {
-        res.end();
+    // Проверка соединения через 1 секунду
+    setTimeout(() => {
+      if (!res.destroyed && res.writable) {
+        try {
+          res.write("data: ping\n\n");
+          res.flush();
+          console.log(`[${now()}] Ping отправлен`);
+        } catch (err) {
+          console.error(`[${now()}] Ошибка отправки ping:`, err.message);
+        }
+      } else {
+        console.log(`[${now()}] Соединение неактивно через 1 секунду`);
       }
-      bluetooth.clients = bluetooth.clients.filter((c) => c !== res);
-    });
+    }, 1000);
     
   } catch (error) {
     console.error(`[${now()}] Ошибка SSE endpoint:`, error.message);
     if (!res.headersSent) {
-      res.status(500).json({ error: "SSE error" });
+      res.status(500).json({ error: "SSE error", details: error.message });
     }
   }
 });
