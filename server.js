@@ -478,81 +478,93 @@ app.post("/bluetooth/connect-disconnect-loop/:mac", async (req, res) => {
         let peripheral = noble._peripherals[mac];
         
         if (!peripheral) {
-          console.log(`Устройство ${mac} не в кеше Noble, запускаем сканирование...`);
+          console.log(`Устройство ${mac} не в кеше Noble, проверяем подключенные устройства...`);
           
-          // Запускаем сканирование чтобы найти устройство
+          // Проверяем все подключенные устройства
           const noble = require("@abandonware/noble");
+          const connectedPeripherals = Object.values(noble._peripherals).filter(p => p.state === 'connected');
+          console.log(`Подключенные устройства: ${connectedPeripherals.map(p => p.address).join(', ')}`);
           
-          if (noble.state !== 'poweredOn') {
-            return res.status(500).json({
-              error: "Bluetooth not ready",
-              message: `Bluetooth state: ${noble.state}. Please check Bluetooth adapter.`
-            });
-          }
+          // Ищем среди подключенных
+          const connectedDevice = connectedPeripherals.find(p => p.address.toLowerCase() === mac);
           
-          let scanTimeout;
-          let found = false;
-          
-          const onDiscover = (p) => {
-            console.log(`Scanning discovered: ${p.address} (looking for ${mac})`);
-            if (p.address.toLowerCase() === mac) {
-              found = true;
-              peripheral = p;
-              clearTimeout(scanTimeout);
-              noble.removeListener('discover', onDiscover);
-              noble.stopScanning();
-              console.log(`Found target device ${mac} during scan`);
-              
-              // Подключаемся чтобы зарегистрировать в BlueZ
-              peripheral.connect((error) => {
-                if (error) {
-                  console.error(`Не удалось подключиться к ${mac}:`, error);
-                  return res.status(500).json({
-                    error: "Connection failed",
-                    message: `Failed to connect to ${mac}: ${error.message}`
-                  });
-                }
-                
-                console.log(`Подключились к ${mac}, теперь пробуем запустить цикл...`);
-                
-                // Ждем немного чтобы устройство зарегистрировалось в BlueZ
-                setTimeout(() => {
-                  // Запускаем детектор для конкретного устройства
-                  detector(devicePath).catch((err) => {
-                    console.error(`Ошибка запуска детектора для ${mac}:`, err);
-                  });
-                  
-                  // Запускаем цикл в фоне
-                  connectDisconnectLoop(mac.replace(/:/g, ''));
-                  
-                  res.json({ 
-                    status: "loop_started", 
-                    mac: mac,
-                    devicePath: devicePath,
-                    message: `Connect/disconnect loop and monitoring started for ${mac}` 
-                  });
-                }, 2000);
+          if (connectedDevice) {
+            console.log(`Найдено подключенное устройство: ${connectedDevice.address}`);
+            peripheral = connectedDevice;
+          } else {
+            console.log(`Устройство ${mac} не в кеше Noble, запускаем сканирование...`);
+            
+            if (noble.state !== 'poweredOn') {
+              return res.status(500).json({
+                error: "Bluetooth not ready",
+                message: `Bluetooth state: ${noble.state}. Please check Bluetooth adapter.`
               });
             }
-          };
-          
-          scanTimeout = setTimeout(() => {
-            noble.removeListener('discover', onDiscover);
-            noble.stopScanning();
-            console.log(`Scan timeout for ${mac}`);
             
-            return res.status(404).json({
-              error: "Device not found",
-              message: `Device ${mac} not found after 5 seconds of scanning. Please make sure device is powered on and within range.`,
-              suggestion: "Try connecting to the device first using /bluetooth/connect/:mac endpoint"
-            });
-          }, 5000);
-          
-          noble.on('discover', onDiscover);
-          noble.startScanning([], true);
-          console.log(`Started scanning for device ${mac}...`);
-          
-          return; // Ждем сканирование
+            let scanTimeout;
+            let found = false;
+            
+            const onDiscover = (p) => {
+              console.log(`Scanning discovered: ${p.address} (looking for ${mac})`);
+              if (p.address.toLowerCase() === mac) {
+                found = true;
+                peripheral = p;
+                clearTimeout(scanTimeout);
+                noble.removeListener('discover', onDiscover);
+                noble.stopScanning();
+                console.log(`Found target device ${mac} during scan`);
+                
+                // Подключаемся чтобы зарегистрировать в BlueZ
+                peripheral.connect((error) => {
+                  if (error) {
+                    console.error(`Не удалось подключиться к ${mac}:`, error);
+                    return res.status(500).json({
+                      error: "Connection failed",
+                      message: `Failed to connect to ${mac}: ${error.message}`
+                    });
+                  }
+                  
+                  console.log(`Подключились к ${mac}, теперь пробуем запустить цикл...`);
+                  
+                  // Ждем немного чтобы устройство зарегистрировалось в BlueZ
+                  setTimeout(() => {
+                    // Запускаем детектор для конкретного устройства
+                    detector(devicePath).catch((err) => {
+                      console.error(`Ошибка запуска детектора для ${mac}:`, err);
+                    });
+                    
+                    // Запускаем цикл в фоне
+                    connectDisconnectLoop(mac.replace(/:/g, ''));
+                    
+                    res.json({ 
+                      status: "loop_started", 
+                      mac: mac,
+                      devicePath: devicePath,
+                      message: `Connect/disconnect loop and monitoring started for ${mac}` 
+                    });
+                  }, 2000);
+                });
+              }
+            };
+            
+            scanTimeout = setTimeout(() => {
+              noble.removeListener('discover', onDiscover);
+              noble.stopScanning();
+              console.log(`Scan timeout for ${mac}`);
+              
+              return res.status(404).json({
+                error: "Device not found",
+                message: `Device ${mac} not found after 5 seconds of scanning. Please make sure device is powered on and within range.`,
+                suggestion: "Try connecting to the device first using /bluetooth/connect/:mac endpoint"
+              });
+            }, 5000);
+            
+            noble.on('discover', onDiscover);
+            noble.startScanning([], true);
+            console.log(`Started scanning for device ${mac}...`);
+            
+            return; // Ждем сканирование
+          }
         }
         
         console.log(`Найдено устройство в Noble кеше: ${peripheral.address}`);
