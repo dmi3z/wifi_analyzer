@@ -635,7 +635,15 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
                     
                     console.log(`Trying volume command ${commandIndex + 1}:`, command.toString('hex'));
                     
+                    // Добавляем таймаут для операции записи
+                    const writeTimeout = setTimeout(() => {
+                      console.error(`Volume command ${commandIndex + 1} timeout`);
+                      commandIndex++;
+                      tryNextCommand();
+                    }, 3000); // 3 секунды на ответ
+                    
                     char.write(command, false, (error) => {
+                      clearTimeout(writeTimeout);
                       if (error) {
                         console.error(`Volume command ${commandIndex + 1} failed:`, error);
                         commandIndex++;
