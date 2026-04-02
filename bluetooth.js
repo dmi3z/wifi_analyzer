@@ -368,12 +368,12 @@ function sendVolumeCommand(mac, { command, commandType, action }, res) {
     
     if (commandType === 'down') {
       volumeCommands = [
+        Buffer.from([0x01, 0x00]),       // 2b29 Volume Down (2 bytes) - ПРИОРИТЕТ
+        Buffer.from([0x00, 0x01]),       // Уменьшение на 1
         Buffer.from([0x01]),             // JBL volume down (single byte)
         Buffer.from([0x00]),             // JBL volume down alternative
         Buffer.from([0x02]),             // ExcelPoint volume down
         Buffer.from([0x03]),             // ExcelPoint volume down v2
-        Buffer.from([0x01, 0x00]),       // Volume Down для 2b29
-        Buffer.from([0x00, 0x01]),       // Уменьшение на 1
         Buffer.from([0x01, 0x02]),       // Уменьшение громкости v2
         Buffer.from([0x03, 0x01]),       // Volume down альтернатива
         Buffer.from([0x80, 0x00]),       // Установка 0%
@@ -382,12 +382,12 @@ function sendVolumeCommand(mac, { command, commandType, action }, res) {
       ];
     } else if (commandType === 'up') {
       volumeCommands = [
+        Buffer.from([0x02, 0x00]),       // 2b29 Volume Up (2 bytes) - ПРИОРИТЕТ
+        Buffer.from([0x00, 0xFF]),       // Увеличение на 1
         Buffer.from([0x02]),             // JBL volume up (single byte)
         Buffer.from([0xFF]),             // JBL volume up alternative
         Buffer.from([0x01]),             // ExcelPoint volume up
         Buffer.from([0x04]),             // ExcelPoint volume up v2
-        Buffer.from([0x02, 0x00]),       // Volume Up
-        Buffer.from([0x00, 0xFF]),       // Увеличение на 1
         Buffer.from([0xFF, 0x00]),       // Максимальная громкость
         Buffer.from([0x00, 0xFF, 0x00]), // 3-byte max
         Buffer.from([0xA0, 0x02])        // Alternative up
@@ -404,30 +404,27 @@ function sendVolumeCommand(mac, { command, commandType, action }, res) {
       }
     } else if (commandType === 'mute') {
       volumeCommands = [
+        Buffer.from([0x00, 0x00]),       // 2b29 Mute (2 bytes) - ПРИОРИТЕТ
         Buffer.from([0x00]),             // JBL mute (single byte)
         Buffer.from([0x05]),             // ExcelPoint mute
-        Buffer.from([0x00, 0x00]),       // Mute/Min volume
         Buffer.from([0x80]),             // JBL mute alternative
         Buffer.from([0x80, 0x00]),       // Alternative mute
         Buffer.from([0xA0, 0x00])        // Another mute format
       ];
     } else {
-      // По умолчанию - JBL Go 4 оптимизированный набор
+      // По умолчанию - 2b29 оптимизированный набор
       volumeCommands = [
-        Buffer.from([0x01]),             // JBL volume down (single byte) - ПРИОРИТЕТ
-        Buffer.from([0x02]),             // ExcelPoint volume down
-        Buffer.from([0x03]),             // ExcelPoint volume down v2
-        Buffer.from([0x00]),             // JBL volume down alternative
-        Buffer.from([0x04]),             // ExcelPoint volume up (для проверки)
-        Buffer.from([0x01]),             // ExcelPoint volume up
-        Buffer.from([0x02]),             // JBL volume up (для проверки)
-        Buffer.from([0xFF]),             // JBL volume up alternative
-        Buffer.from([0x01, 0x00]),       // Volume Down для 2b29
-        Buffer.from([0x02, 0x00]),       // Volume Up (для проверки)
-        Buffer.from([0x00, 0x80]),       // Установка громкости 50%
-        Buffer.from([0x00, 0x00]),       // Минимальная громкость
+        Buffer.from([0x01, 0x00]),       // 2b29 Volume Down (2 bytes) - ПРИОРИТЕТ
+        Buffer.from([0x02, 0x00]),       // 2b29 Volume Up (2 bytes) - ПРИОРИТЕТ
+        Buffer.from([0x00, 0x00]),       // 2b29 Mute (2 bytes) - ПРИОРИТЕТ
         Buffer.from([0x00, 0x01]),       // Уменьшение на 1
-        Buffer.from([0xFF, 0x00]),       // Максимальная громкость
+        Buffer.from([0x00, 0xFF]),       // Увеличение на 1
+        Buffer.from([0x01]),             // JBL volume down (single byte)
+        Buffer.from([0x02]),             // JBL volume up (single byte)
+        Buffer.from([0x00]),             // JBL volume down alternative
+        Buffer.from([0xFF]),             // JBL volume up alternative
+        Buffer.from([0x00, 0x80]),       // Установка громкости 50%
+        Buffer.from([0x80, 0x00]),       // Alternative mute
         Buffer.from([0x01, 0x02]),       // Уменьшение громкости v2
         Buffer.from([0x03, 0x01]),       // Volume down альтернатива
         Buffer.from([0x10]),             // JBL specific command 1
@@ -461,8 +458,10 @@ function sendVolumeCommand(mac, { command, commandType, action }, res) {
       }
 
       const cmd = volumeCommands[commandIndex];
-      // Используем ExcelPoint custom характеристику для JBL
+      // Используем правильную характеристику для JBL - 2b29 (Volume Control)
       const char = writableCharacteristics.find(c => 
+        c.uuid === '2b29'
+      ) || writableCharacteristics.find(c => 
         c.uuid === '657863656c706f696e742e636e6c0002'
       ) || writableCharacteristics[0];
       
@@ -471,6 +470,7 @@ function sendVolumeCommand(mac, { command, commandType, action }, res) {
       // Добавляем диагностику перед записью
       console.log(`Characteristic properties: ${char.properties.join(', ')}`);
       console.log(`Using writeWithoutResponse: ${useWithoutResponse}`);
+      console.log(`Current value of ${char.uuid}:`, char.uuid === '2b29' ? '00 (from read)' : 'unknown');
       
       // Добавляем таймаут для операции записи
       const writeTimeout = setTimeout(() => {
@@ -479,8 +479,8 @@ function sendVolumeCommand(mac, { command, commandType, action }, res) {
         tryNextCommand();
       }, 3000); // 3 секунды на ответ
       
-      // Используем writeWithoutResponse для JBL устройств
-      const useWithoutResponse = char.properties.includes('writeWithoutResponse');
+      // Для 2b29 используем write с ответом, для ExcelPoint - writeWithoutResponse
+      const useWithoutResponse = char.uuid === '2b29' ? false : char.properties.includes('writeWithoutResponse');
       char.write(cmd, useWithoutResponse, (error) => {
         clearTimeout(writeTimeout);
         if (error) {
