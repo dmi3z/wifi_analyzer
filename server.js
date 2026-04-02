@@ -440,20 +440,105 @@ app.post("/bluetooth/connect-disconnect-loop/:mac", async (req, res) => {
   try {
     console.log(`Starting connect/disconnect loop for ${mac}...`);
     
-    // Запускаем детектор для конкретного устройства
-    detector(devicePath).catch((err) => {
-      console.error(`Ошибка запуска детектора для ${mac}:`, err);
-    });
+    // Сначала проверим доступные устройства
+    console.log("Проверка доступных устройств в BlueZ...");
     
-    // Запускаем цикл в фоне
-    connectDisconnectLoop(mac.replace(/:/g, ''));
+    try {
+      const obj = await bus.getProxyObject(BLUEZ, "/org/bluez");
+      const manager = obj.getInterface("org.freedesktop.DBus.ObjectManager");
+      const objects = await manager.GetManagedObjects();
+      
+      let deviceFound = false;
+      let actualDevicePath = null;
+      
+      for (const [path, interfaces] of Object.entries(objects)) {
+        if (interfaces["org.bluez.Device1"]) {
+          const deviceProps = interfaces["org.bluez.Device1"];
+          if (deviceProps.Address && deviceProps.Address.toLowerCase() === mac) {
+            deviceFound = true;
+            actualDevicePath = path;
+            console.log(`Найдено устройство: ${path} (${deviceProps.Name || 'Unknown'})`);
+            break;
+          }
+        }
+      }
+      
+      if (!deviceFound) {
+        console.log(`Устройство ${mac} не найдено в BlueZ. Пробуем сначала подключиться через Noble...`);
+        
+        // Пробуем подключиться через Noble чтобы зарегистрировать устройство
+        const noble = require("@abandonware/noble");
+        let peripheral = noble._peripherals[mac];
+        
+        if (!peripheral) {
+          console.log(`Устройство ${mac} не в кеше Noble, запускаем сканирование...`);
+          
+          return res.status(404).json({
+            error: "Device not found",
+            message: `Device ${mac} not found in BlueZ or Noble cache. Please make sure device is powered on and within range.`,
+            suggestion: "Try connecting to the device first using /bluetooth/connect/:mac endpoint"
+          });
+        }
+        
+        console.log(`Найдено устройство в Noble кеше: ${peripheral.address}`);
+        
+        // Подключаемся чтобы зарегистрировать в BlueZ
+        peripheral.connect((error) => {
+          if (error) {
+            console.error(`Не удалось подключиться к ${mac}:`, error);
+            return res.status(500).json({
+              error: "Connection failed",
+              message: `Failed to connect to ${mac}: ${error.message}`
+            });
+          }
+          
+          console.log(`Подключились к ${mac}, теперь пробуем запустить цикл...`);
+          
+          // Ждем немного чтобы устройство зарегистрировалось в BlueZ
+          setTimeout(() => {
+            // Запускаем детектор для конкретного устройства
+            detector(actualDevicePath || devicePath).catch((err) => {
+              console.error(`Ошибка запуска детектора для ${mac}:`, err);
+            });
+            
+            // Запускаем цикл в фоне
+            connectDisconnectLoop(mac.replace(/:/g, ''));
+            
+            res.json({ 
+              status: "loop_started", 
+              mac: mac,
+              devicePath: actualDevicePath || devicePath,
+              message: `Connect/disconnect loop and monitoring started for ${mac}` 
+            });
+          }, 2000);
+        });
+        
+        return; // Ждем подключения
+      }
+      
+      // Запускаем детектор для конкретного устройства
+      detector(actualDevicePath).catch((err) => {
+        console.error(`Ошибка запуска детектора для ${mac}:`, err);
+      });
+      
+      // Запускаем цикл в фоне
+      connectDisconnectLoop(mac.replace(/:/g, ''));
+      
+      res.json({ 
+        status: "loop_started", 
+        mac: mac,
+        devicePath: actualDevicePath,
+        message: `Connect/disconnect loop and monitoring started for ${mac}` 
+      });
+      
+    } catch (bluezError) {
+      console.error(`Ошибка проверки BlueZ:`, bluezError);
+      return res.status(500).json({
+        error: "BlueZ error",
+        message: `Error checking BlueZ: ${bluezError.message}`
+      });
+    }
     
-    res.json({ 
-      status: "loop_started", 
-      mac: mac,
-      devicePath: devicePath,
-      message: `Connect/disconnect loop and monitoring started for ${mac}` 
-    });
   } catch (error) {
     console.error(`Error starting loop for ${mac}:`, error);
     res.status(500).json({ 
