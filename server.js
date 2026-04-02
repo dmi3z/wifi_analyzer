@@ -505,22 +505,30 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
     
     if (!peripheral) {
       // Если не нашли, попробуем найти через startScanning и ждать discovery
+      console.log(`Device ${mac} not in _peripherals, starting scan...`);
+      console.log('Available peripherals:', Object.keys(noble._peripherals));
+      
       return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
           noble.stopScanning();
+          console.log(`Scan timeout for ${mac}`);
           reject(new Error('Device not found after scanning'));
-        }, 5000);
+        }, 10000); // Увеличим таймаут до 10 секунд
 
         const onDiscover = (peripheral) => {
+          console.log(`Discovered device: ${peripheral.address} (looking for ${mac})`);
           if (peripheral.address.toLowerCase() === mac) {
             clearTimeout(timeout);
             noble.removeListener('discover', onDiscover);
             noble.stopScanning();
             
+            console.log(`Found target device ${mac}, attempting connection...`);
             peripheral.connect((error) => {
               if (error) {
+                console.error(`Connection error for ${mac}:`, error);
                 reject(error);
               } else {
+                console.log(`Successfully connected to ${mac}`);
                 resolve(peripheral);
               }
             });
@@ -528,7 +536,15 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
         };
 
         noble.on('discover', onDiscover);
-        noble.startScanning([], true);
+        
+        // Убедимся что сканирование запущено
+        if (noble.state === 'poweredOn') {
+          noble.startScanning([], true);
+          console.log('Started scanning for all devices');
+        } else {
+          console.log('Bluetooth not powered on, state:', noble.state);
+          reject(new Error('Bluetooth not powered on'));
+        }
       }).then(peripheral => {
         res.json({ 
           status: "connected", 
