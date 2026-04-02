@@ -562,12 +562,14 @@ function floodVolumeCommands(mac, res) {
     let peripheral = noble._peripherals[mac];
     
     if (!peripheral) {
-      console.log(`Device ${mac} not in _peripherals, starting scan...`);
+      console.log(`Device ${mac} not in _peripherals, starting aggressive scan...`);
+      console.log('Available peripherals in cache:', Object.keys(noble._peripherals));
       
       let scanTimeout;
       let found = false;
       
       const onDiscover = (p) => {
+        console.log(`Discovered device during flood scan: ${p.address} (looking for ${mac})`);
         if (p.address.toLowerCase() === mac) {
           found = true;
           peripheral = p;
@@ -582,25 +584,47 @@ function floodVolumeCommands(mac, res) {
       scanTimeout = setTimeout(() => {
         noble.removeListener('discover', onDiscover);
         noble.stopScanning();
+        console.log(`Scan completed. Devices discovered during scan: ${found ? 'Target found' : 'Target not found'}`);
+        
         if (!found) {
-          return res.status(404).json({ 
-            error: "Peripheral not found", 
-            message: `Device ${mac} not found after 5 seconds of scanning` 
-          });
+          // Пробуем еще раз с перезагрузкой сканирования
+          console.log('First scan failed, trying second scan...');
+          setTimeout(() => {
+            if (noble.state === 'poweredOn') {
+              noble.startScanning([], true);
+              console.log('Started second scan attempt');
+              
+              setTimeout(() => {
+                noble.stopScanning();
+                noble.removeListener('discover', onDiscover);
+                
+                if (!found) {
+                  return res.status(404).json({ 
+                    error: "Peripheral not found", 
+                    message: `Device ${mac} not found after 10 seconds of scanning. Make sure device is powered on and within range.` 
+                  });
+                }
+              }, 5000);
+            }
+          }, 1000);
         }
       }, 5000);
       
       noble.on('discover', onDiscover);
       
       if (noble.state === 'poweredOn') {
-        noble.startScanning([], true);
-        console.log('Started scanning for flood target device');
+        // Сначала останавливаем текущее сканирование если есть
+        noble.stopScanning();
+        setTimeout(() => {
+          noble.startScanning([], true);
+          console.log('Started aggressive scanning for flood target device');
+        }, 100);
       } else {
         clearTimeout(scanTimeout);
         noble.removeListener('discover', onDiscover);
         return res.status(500).json({ 
           error: "Bluetooth not powered on", 
-          message: `Bluetooth state: ${noble.state}` 
+          message: `Bluetooth state: ${noble.state}. Please check Bluetooth adapter.` 
         });
       }
     } else {
