@@ -600,7 +600,12 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
                   
                   // Выводим все найденные характеристики
                   characteristics.forEach((char, index) => {
-                    console.log(`Characteristic ${index + 1}: ${char.uuid} - Properties: ${char.properties.join(', ')}`);
+                    let description = '';
+                    if (char.uuid === '2a05') description = ' (Service Changed - уведомления об изменении сервисов)';
+                    else if (char.uuid === '2b3a') description = ' (Volume State - состояние громкости)';
+                    else if (char.uuid === '2b29') description = ' (Volume Control - управление громкостью)';
+                    
+                    console.log(`Characteristic ${index + 1}: ${char.uuid}${description} - Properties: ${char.properties.join(', ')}`);
                   });
                   
                   // Ищем характеристики для записи (свойство write)
@@ -621,18 +626,17 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
                   console.log(`Found ${writableCharacteristics.length} writable characteristics`);
                   
                   // Пытаемся отправить команду уменьшения громкости
-                  // Это может быть разной для разных устройств, пробуем несколько вариантов
+                  // Используем правильные команды для характеристики 2b29 (Volume Control)
                   const volumeCommands = [
-                    Buffer.from([0x00, 0x01, 0x02]), // Общая команда уменьшения громкости
-                    Buffer.from([0x04, 0x00, 0x01]), // Альтернативная команда
-                    Buffer.from([0x02, 0x00]),       // Простая команда
-                    Buffer.from('VOL-'),              // Текстовая команда
-                    Buffer.from([0x01, 0x02]),       // Уменьшение громкости v2
+                    Buffer.from([0x01, 0x00]),       // Volume Down для 2b29
+                    Buffer.from([0x02, 0x00]),       // Volume Up (для проверки)
                     Buffer.from([0x00, 0x80]),       // Установка громкости 50%
                     Buffer.from([0x00, 0x00]),       // Минимальная громкость
-                    Buffer.from([0x01, 0x00]),       // Команда mute/volume down
-                    Buffer.from([0x03, 0x01]),       // Volume down для некоторых устройств
-                    Buffer.from([0x02, 0x01, 0x00])  // Еще один вариант
+                    Buffer.from([0x00, 0x01]),       // Уменьшение на 1
+                    Buffer.from([0xFF, 0x00]),       // Максимальная громкость (для теста)
+                    Buffer.from([0x00, 0x10]),       // Громкость 16/255
+                    Buffer.from([0x01, 0x02]),       // Уменьшение громкости v2
+                    Buffer.from([0x03, 0x01])        // Volume down альтернатива
                   ];
 
                   let commandIndex = 0;
