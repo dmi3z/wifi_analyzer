@@ -289,89 +289,6 @@ function ensureMonitorMode(iface) {
   }
 }
 
-//// BLE functions
-
-// Функция для периодического обновления RSSI подключенных устройств
-function startRSSIUpdates(peripheral, mac, device) {
-  console.log(`Starting RSSI updates for ${mac}`);
-  
-  // Сохраняем начальный RSSI и отслеживаем изменения
-  let lastRSSI = device.rssi;
-  let noChangeCount = 0;
-  const maxNoChangeCount = 5; // Если 5 раз нет изменений, уменьшаем частоту
-  
-  const updateInterval = setInterval(() => {
-    try {
-      // Получаем текущий RSSI из peripheral (может не меняться после подключения)
-      const currentRSSI = peripheral.rssi;
-      
-      if (currentRSSI !== undefined && currentRSSI !== lastRSSI) {
-        // RSSI изменился - обновляем
-        const updatedDevice = {
-          ...device,
-          rssi: currentRSSI,
-          last_seen: Date.now()
-        };
-        
-        devices[mac] = updatedDevice;
-        
-        // Обновляем в connectedDevices
-        const connectedInfo = connectedDevices.get(mac);
-        if (connectedInfo) {
-          connectedInfo.lastRSSI = currentRSSI;
-          connectedInfo.noChangeCount = 0;
-          connectedDevices.set(mac, connectedInfo);
-        }
-        
-        // Отправляем через SSE
-        broadcast("device", updatedDevice);
-        console.log(`Updated RSSI for ${mac}: ${currentRSSI} dBm (changed)`);
-        
-        lastRSSI = currentRSSI;
-        noChangeCount = 0;
-      } else {
-        // RSSI не изменился - добавляем счетчик
-        noChangeCount++;
-        
-        // Если долго нет изменений, добавляем небольшой шум для имитации изменений
-        if (noChangeCount >= maxNoChangeCount) {
-          const noisyRSSI = lastRSSI + (Math.random() - 0.5); // Небольшое изменение
-          const updatedDevice = {
-            ...device,
-            rssi: noisyRSSI,
-            last_seen: Date.now()
-          };
-          
-          devices[mac] = updatedDevice;
-          
-          const connectedInfo = connectedDevices.get(mac);
-          if (connectedInfo) {
-            connectedInfo.lastRSSI = noisyRSSI;
-            connectedInfo.noChangeCount = 0;
-            connectedDevices.set(mac, connectedInfo);
-          }
-          
-          broadcast("device", updatedDevice);
-          console.log(`Updated RSSI for ${mac}: ${noisyRSSI} dBm (simulated change)`);
-          
-          lastRSSI = noisyRSSI;
-          noChangeCount = 0;
-        }
-      }
-    } catch (error) {
-      console.error(`RSSI update error for ${mac}:`, error);
-    }
-  }, 2000); // Обновляем каждые 2 секунды
-  
-  // Сохраняем interval для очистки при отключении
-  connectedDevices.set(mac, { 
-    ...connectedDevices.get(mac), 
-    updateInterval,
-    lastRSSI,
-    noChangeCount 
-  });
-}
-
 function parseManufacturerData(buf) {
   if (!buf) return null;
 
@@ -481,7 +398,6 @@ function broadcast(event, data) {
   clients.forEach((c) => c.write(payload));
 }
 
-// --- BLE SCAN ---
 app.post("/bluetooth/off", (req, res) => {
   exec("sudo rfkill block bluetooth", () => res.json({ status: "off" }));
 });
@@ -591,9 +507,6 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
       console.log('Available peripherals:', Object.keys(noble._peripherals));
       
       const timeout = setTimeout(() => {
-        noble.stopScanning();
-        noble.removeListener('discover', onDiscover);
-        console.log(`Scan timeout for ${mac}`);
         return res.status(404).json({ 
           error: "Device not found after scanning", 
           message: `Device ${mac} not found after 10 seconds of scanning` 
@@ -604,8 +517,6 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
         console.log(`Discovered device: ${peripheral.address} (looking for ${mac})`);
         if (peripheral.address.toLowerCase() === mac) {
           clearTimeout(timeout);
-          noble.removeListener('discover', onDiscover);
-          noble.stopScanning();
           
           console.log(`Found target device ${mac}, attempting connection...`);
             
@@ -703,10 +614,8 @@ function handleDevicePreparation(peripheral, mac, device, res) {
       device: device,
       message: `Successfully connected to ${mac} (device preparation timeout)` 
     });
-  }, 15000); // 15 секунд на весь процесс
+  }, 5000); // 15 секунд на весь процесс
 
-  // Запускаем периодическое обновление RSSI для подключенного устройства
-  startRSSIUpdates(peripheral, mac, device);
 
   // Попытка найти сервисы и характеристики для управления громкостью
   peripheral.discoverServices([], (error, services) => {
