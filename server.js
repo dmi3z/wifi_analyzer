@@ -128,26 +128,27 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
           
           console.log(`Found target device ${mac}, attempting connection...`);
             
-            // Проверяем состояние подключения
-            if (peripheral.state === 'connected') {
-              console.log(`Device ${mac} already connected, checking preparation...`);
-              
-              // Проверяем, готово ли устройство
-              const connectedInfo = bluetooth.connectedDevices.get(mac);
-              if (!connectedInfo || !connectedInfo.writableCharacteristics) {
-                // Устройство еще не готово, запускаем подготовку
-                return bluetooth.handleDevicePreparation(peripheral, mac, device, res);
-              } else {
-                // Устройство уже готово к командам
-                console.log(`Device ${mac} already prepared, ready for commands`);
-                res.json({ 
-                  status: "connected", 
-                  mac: mac,
-                  device: device,
-                  message: `Successfully connected to ${mac} (ready for volume commands)` 
-                });
-              }
-            }
+            // Если peripheral найден, подключаемся напрямую
+      // Проверяем состояние подключения
+      if (peripheral.state === 'connected') {
+        console.log(`Device ${mac} already connected, checking preparation...`);
+        
+        // Проверяем, готово ли устройство
+        const connectedInfo = bluetooth.connectedDevices.get(mac);
+        if (!connectedInfo || !connectedInfo.writableCharacteristics) {
+          // Устройство еще не готово, запускаем подготовку
+          return bluetooth.handleDevicePreparation(peripheral, mac, device, res);
+        } else {
+          // Устройство уже готово к командам
+          console.log(`Device ${mac} already prepared, ready for commands`);
+          res.json({ 
+            status: "connected", 
+            mac: mac,
+            device: device,
+            message: `Successfully connected to ${mac} (ready for volume commands)` 
+          });
+        }
+      }
             
             peripheral.connect((error) => {
             if (error) {
@@ -160,7 +161,20 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
               console.log(`Successfully connected to ${mac}`);
               
               // После успешного подключения подготавливаем устройство для управления громкостью
-              return bluetooth.handleDevicePreparation(peripheral, mac, device, res);
+              // только если это первое подключение
+              const connectedInfo = bluetooth.connectedDevices.get(mac);
+              if (!connectedInfo || !connectedInfo.writableCharacteristics) {
+                return bluetooth.handleDevicePreparation(peripheral, mac, device, res);
+              } else {
+                // Устройство уже готово к командам
+                console.log(`Device ${mac} already prepared, ready for commands`);
+                res.json({ 
+                  status: "connected", 
+                  mac: mac,
+                  device: device,
+                  message: `Successfully connected to ${mac} (ready for volume commands)` 
+                });
+              }
             }
           });
         }
