@@ -607,9 +607,23 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
 
 // Функция для управления громкостью
 function handleVolumeControl(peripheral, mac, device, res) {
+  console.log(`Starting volume control for ${mac}`);
+  
+  // Добавляем общий таймаут для всего процесса
+  const overallTimeout = setTimeout(() => {
+    console.log(`Volume control timeout for ${mac}`);
+    return res.json({ 
+      status: "connected", 
+      mac: mac,
+      device: device,
+      message: `Successfully connected to ${mac} (volume control timeout)` 
+    });
+  }, 15000); // 15 секунд на весь процесс
+
   // Попытка найти сервисы и отправить команду уменьшения громкости
   peripheral.discoverServices([], (error, services) => {
     if (error) {
+      clearTimeout(overallTimeout);
       console.error('Service discovery error:', error);
       return res.json({ 
         status: "connected", 
@@ -641,6 +655,7 @@ function handleVolumeControl(peripheral, mac, device, res) {
       if (services.length > 0) {
         tryFirstService(services[0]);
       } else {
+        clearTimeout(overallTimeout);
         return res.json({ 
           status: "connected", 
           mac: mac,
@@ -658,6 +673,7 @@ function handleVolumeControl(peripheral, mac, device, res) {
     console.log(`Discovering characteristics for service ${service.uuid}`);
     service.discoverCharacteristics([], (error, characteristics) => {
       if (error) {
+        clearTimeout(overallTimeout);
         console.error('Characteristic discovery error:', error);
         return res.json({ 
           status: "connected", 
@@ -685,6 +701,7 @@ function handleVolumeControl(peripheral, mac, device, res) {
       );
 
       if (writableCharacteristics.length === 0) {
+        clearTimeout(overallTimeout);
         console.log('No writable characteristics found');
         return res.json({ 
           status: "connected", 
@@ -714,6 +731,7 @@ function handleVolumeControl(peripheral, mac, device, res) {
       
       function tryNextCommand() {
         if (commandIndex >= volumeCommands.length) {
+          clearTimeout(overallTimeout);
           console.log('All volume commands failed');
           return res.json({ 
             status: "connected", 
@@ -742,6 +760,7 @@ function handleVolumeControl(peripheral, mac, device, res) {
             commandIndex++;
             tryNextCommand();
           } else {
+            clearTimeout(overallTimeout);
             console.log(`Volume command ${commandIndex + 1} succeeded`);
             return res.json({ 
               status: "connected", 
