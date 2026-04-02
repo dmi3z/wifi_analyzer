@@ -571,160 +571,194 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
       return; // Выходим из функции, ждем асинхронные колбэки
     }
 
-    // Функция для управления громкостью
-    function handleVolumeControl(peripheral, mac, device, res) {
-      // Попытка найти сервисы и отправить команду уменьшения громкости
-      peripheral.discoverServices([], (error, services) => {
-        if (error) {
-          console.error('Service discovery error:', error);
+    // Если peripheral найден, подключаемся напрямую
+      // Проверяем состояние подключения
+      if (peripheral.state === 'connected') {
+        console.log(`Device ${mac} already connected, attempting volume control...`);
+        
+        // Устройство уже подключено, пробуем отправить команду громкости
+        return handleVolumeControl(peripheral, mac, device, res);
+      }
+      
+      peripheral.connect((error) => {
+      if (error) {
+        console.error(`Failed to connect to ${mac}:`, error);
+        return res.status(500).json({ 
+          error: "Connection failed", 
+          message: `Connection failed to ${mac}: ${error.message}` 
+        });
+      }
+
+      res.json({ 
+        status: "connected", 
+        mac: mac,
+        device: device,
+        message: `Successfully connected to ${mac}` 
+      });
+    });
+  } catch (error) {
+    console.error(`Error connecting to ${mac}:`, error);
+    res.status(500).json({ 
+      error: "Connection error", 
+      message: `Error connecting to ${mac}: ${error.message}` 
+    });
+  }
+});
+
+// Функция для управления громкостью
+function handleVolumeControl(peripheral, mac, device, res) {
+  // Попытка найти сервисы и отправить команду уменьшения громкости
+  peripheral.discoverServices([], (error, services) => {
+    if (error) {
+      console.error('Service discovery error:', error);
+      return res.json({ 
+        status: "connected", 
+        mac: mac,
+        device: device,
+        message: `Successfully connected to ${mac} (service discovery failed)` 
+      });
+    }
+
+    console.log(`Found ${services.length} services for ${mac}`);
+    
+    // Выводим все найденные сервисы
+    services.forEach((service, index) => {
+      console.log(`Service ${index + 1}: ${service.uuid}`);
+    });
+    
+    // Ищем сервисы, связанные с аудио
+    const audioServices = services.filter(service => {
+      const uuid = service.uuid.toLowerCase();
+      return uuid.includes('audio') || uuid.includes('volume') || 
+             uuid.includes('180b') || uuid.includes('1812') || // Common audio service UUIDs
+             uuid.includes('fe2c') || // Apple Headphone Service
+             uuid.includes('657863656c706f696e742e'); // ExcelPoint custom service
+    });
+
+    if (audioServices.length === 0) {
+      console.log('No audio services found, trying first service');
+      // Если аудио сервисы не найдены, пробуем первый доступный сервис
+      if (services.length > 0) {
+        tryFirstService(services[0]);
+      } else {
+        return res.json({ 
+          status: "connected", 
+          mac: mac,
+          device: device,
+          message: `Successfully connected to ${mac} (no services found)` 
+        });
+      }
+    } else {
+      console.log(`Found ${audioServices.length} potential audio services`);
+      tryFirstService(audioServices[0]);
+    }
+  });
+
+  function tryFirstService(service) {
+    console.log(`Discovering characteristics for service ${service.uuid}`);
+    service.discoverCharacteristics([], (error, characteristics) => {
+      if (error) {
+        console.error('Characteristic discovery error:', error);
+        return res.json({ 
+          status: "connected", 
+          mac: mac,
+          device: device,
+          message: `Successfully connected to ${mac} (characteristic discovery failed)` 
+        });
+      }
+
+      console.log(`Found ${characteristics.length} characteristics`);
+      
+      // Выводим все найденные характеристики
+      characteristics.forEach((char, index) => {
+        let description = '';
+        if (char.uuid === '2a05') description = ' (Service Changed - уведомления об изменении сервисов)';
+        else if (char.uuid === '2b3a') description = ' (Volume State - состояние громкости)';
+        else if (char.uuid === '2b29') description = ' (Volume Control - управление громкостью)';
+        
+        console.log(`Characteristic ${index + 1}: ${char.uuid}${description} - Properties: ${char.properties.join(', ')}`);
+      });
+      
+      // Ищем характеристики для записи (свойство write)
+      const writableCharacteristics = characteristics.filter(char => 
+        char.properties.includes('write') || char.properties.includes('writeWithoutResponse')
+      );
+
+      if (writableCharacteristics.length === 0) {
+        console.log('No writable characteristics found');
+        return res.json({ 
+          status: "connected", 
+          mac: mac,
+          device: device,
+          message: `Successfully connected to ${mac} (no writable characteristics)` 
+        });
+      }
+
+      console.log(`Found ${writableCharacteristics.length} writable characteristics`);
+      
+      // Пытаемся отправить команду уменьшения громкости
+      // Используем правильные команды для характеристики 2b29 (Volume Control)
+      const volumeCommands = [
+        Buffer.from([0x01, 0x00]),       // Volume Down для 2b29
+        Buffer.from([0x02, 0x00]),       // Volume Up (для проверки)
+        Buffer.from([0x00, 0x80]),       // Установка громкости 50%
+        Buffer.from([0x00, 0x00]),       // Минимальная громкость
+        Buffer.from([0x00, 0x01]),       // Уменьшение на 1
+        Buffer.from([0xFF, 0x00]),       // Максимальная громкость (для теста)
+        Buffer.from([0x00, 0x10]),       // Громкость 16/255
+        Buffer.from([0x01, 0x02]),       // Уменьшение громкости v2
+        Buffer.from([0x03, 0x01])        // Volume down альтернатива
+      ];
+
+      let commandIndex = 0;
+      
+      function tryNextCommand() {
+        if (commandIndex >= volumeCommands.length) {
+          console.log('All volume commands failed');
           return res.json({ 
             status: "connected", 
             mac: mac,
             device: device,
-            message: `Successfully connected to ${mac} (service discovery failed)` 
+            message: `Successfully connected to ${mac} (volume control failed)` 
           });
         }
 
-        console.log(`Found ${services.length} services for ${mac}`);
+        const command = volumeCommands[commandIndex];
+        const char = writableCharacteristics[0];
         
-        // Выводим все найденные сервисы
-        services.forEach((service, index) => {
-          console.log(`Service ${index + 1}: ${service.uuid}`);
-        });
+        console.log(`Trying volume command ${commandIndex + 1}:`, command.toString('hex'));
         
-        // Ищем сервисы, связанные с аудио
-        const audioServices = services.filter(service => {
-          const uuid = service.uuid.toLowerCase();
-          return uuid.includes('audio') || uuid.includes('volume') || 
-                 uuid.includes('180b') || uuid.includes('1812') || // Common audio service UUIDs
-                 uuid.includes('fe2c') || // Apple Headphone Service
-                 uuid.includes('657863656c706f696e742e'); // ExcelPoint custom service
-        });
-
-        if (audioServices.length === 0) {
-          console.log('No audio services found, trying first service');
-          // Если аудио сервисы не найдены, попробуем первый доступный сервис
-          if (services.length > 0) {
-            tryFirstService(services[0]);
-          } else {
-            return res.json({ 
-              status: "connected", 
-              mac: mac,
-              device: device,
-              message: `Successfully connected to ${mac} (no services found)` 
-            });
-          }
-        } else {
-          console.log(`Found ${audioServices.length} potential audio services`);
-          tryFirstService(audioServices[0]);
-        }
-      });
-
-      function tryFirstService(service) {
-        console.log(`Discovering characteristics for service ${service.uuid}`);
-        service.discoverCharacteristics([], (error, characteristics) => {
-          if (error) {
-            console.error('Characteristic discovery error:', error);
-            return res.json({ 
-              status: "connected", 
-              mac: mac,
-              device: device,
-              message: `Successfully connected to ${mac} (characteristic discovery failed)` 
-            });
-          }
-
-          console.log(`Found ${characteristics.length} characteristics`);
-          
-          // Выводим все найденные характеристики
-          characteristics.forEach((char, index) => {
-            let description = '';
-            if (char.uuid === '2a05') description = ' (Service Changed - уведомления об изменении сервисов)';
-            else if (char.uuid === '2b3a') description = ' (Volume State - состояние громкости)';
-            else if (char.uuid === '2b29') description = ' (Volume Control - управление громкостью)';
-            
-            console.log(`Characteristic ${index + 1}: ${char.uuid}${description} - Properties: ${char.properties.join(', ')}`);
-          });
-          
-          // Ищем характеристики для записи (свойство write)
-          const writableCharacteristics = characteristics.filter(char => 
-            char.properties.includes('write') || char.properties.includes('writeWithoutResponse')
-          );
-
-          if (writableCharacteristics.length === 0) {
-            console.log('No writable characteristics found');
-            return res.json({ 
-              status: "connected", 
-              mac: mac,
-              device: device,
-              message: `Successfully connected to ${mac} (no writable characteristics)` 
-            });
-          }
-
-          console.log(`Found ${writableCharacteristics.length} writable characteristics`);
-          
-          // Пытаемся отправить команду уменьшения громкости
-          // Используем правильные команды для характеристики 2b29 (Volume Control)
-          const volumeCommands = [
-            Buffer.from([0x01, 0x00]),       // Volume Down для 2b29
-            Buffer.from([0x02, 0x00]),       // Volume Up (для проверки)
-            Buffer.from([0x00, 0x80]),       // Установка громкости 50%
-            Buffer.from([0x00, 0x00]),       // Минимальная громкость
-            Buffer.from([0x00, 0x01]),       // Уменьшение на 1
-            Buffer.from([0xFF, 0x00]),       // Максимальная громкость (для теста)
-            Buffer.from([0x00, 0x10]),       // Громкость 16/255
-            Buffer.from([0x01, 0x02]),       // Уменьшение громкости v2
-            Buffer.from([0x03, 0x01])        // Volume down альтернатива
-          ];
-
-          let commandIndex = 0;
-          
-          function tryNextCommand() {
-            if (commandIndex >= volumeCommands.length) {
-              console.log('All volume commands failed');
-              return res.json({ 
-                status: "connected", 
-                mac: mac,
-                device: device,
-                message: `Successfully connected to ${mac} (volume control failed)` 
-              });
-            }
-
-            const command = volumeCommands[commandIndex];
-            const char = writableCharacteristics[0];
-            
-            console.log(`Trying volume command ${commandIndex + 1}:`, command.toString('hex'));
-            
-            // Добавляем таймаут для операции записи
-            const writeTimeout = setTimeout(() => {
-              console.error(`Volume command ${commandIndex + 1} timeout`);
-              commandIndex++;
-              tryNextCommand();
-            }, 3000); // 3 секунды на ответ
-            
-            char.write(command, false, (error) => {
-              clearTimeout(writeTimeout);
-              if (error) {
-                console.error(`Volume command ${commandIndex + 1} failed:`, error);
-                commandIndex++;
-                tryNextCommand();
-              } else {
-                console.log(`Volume command ${commandIndex + 1} succeeded`);
-                return res.json({ 
-                  status: "connected", 
-                  mac: mac,
-                  device: device,
-                  message: `Successfully connected to ${mac} and sent volume down command` 
-                });
-              }
-            });
-          }
-
+        // Добавляем таймаут для операции записи
+        const writeTimeout = setTimeout(() => {
+          console.error(`Volume command ${commandIndex + 1} timeout`);
+          commandIndex++;
           tryNextCommand();
+        }, 3000); // 3 секунды на ответ
+        
+        char.write(command, false, (error) => {
+          clearTimeout(writeTimeout);
+          if (error) {
+            console.error(`Volume command ${commandIndex + 1} failed:`, error);
+            commandIndex++;
+            tryNextCommand();
+          } else {
+            console.log(`Volume command ${commandIndex + 1} succeeded`);
+            return res.json({ 
+              status: "connected", 
+              mac: mac,
+              device: device,
+              message: `Successfully connected to ${mac} and sent volume down command` 
+            });
+          }
         });
       }
-    }
 
-    // Отключение от Bluetooth устройства
+      tryNextCommand();
+    });
+  }
+}
+
+// Отключение от Bluetooth устройства
 app.post("/bluetooth/disconnect/:mac", async (req, res) => {
   const mac = req.params.mac.toLowerCase();
   
@@ -913,6 +947,7 @@ app.get("/wifi", async (req, res) => {
 
     res.json(results);
   });
+});
 
 // ==========================
 // Start server
