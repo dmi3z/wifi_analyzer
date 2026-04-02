@@ -559,7 +559,9 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
                 const audioServices = services.filter(service => {
                   const uuid = service.uuid.toLowerCase();
                   return uuid.includes('audio') || uuid.includes('volume') || 
-                         uuid.includes('180b') || uuid.includes('1812'); // Common audio service UUIDs
+                         uuid.includes('180b') || uuid.includes('1812') || // Common audio service UUIDs
+                         uuid.includes('fe2c') || // Apple Headphone Service
+                         uuid.includes('657863656c706f696e742e'); // ExcelPoint custom service
                 });
 
                 if (audioServices.length === 0) {
@@ -624,7 +626,13 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
                     Buffer.from([0x00, 0x01, 0x02]), // Общая команда уменьшения громкости
                     Buffer.from([0x04, 0x00, 0x01]), // Альтернативная команда
                     Buffer.from([0x02, 0x00]),       // Простая команда
-                    Buffer.from('VOL-')              // Текстовая команда
+                    Buffer.from('VOL-'),              // Текстовая команда
+                    Buffer.from([0x01, 0x02]),       // Уменьшение громкости v2
+                    Buffer.from([0x00, 0x80]),       // Установка громкости 50%
+                    Buffer.from([0x00, 0x00]),       // Минимальная громкость
+                    Buffer.from([0x01, 0x00]),       // Команда mute/volume down
+                    Buffer.from([0x03, 0x01]),       // Volume down для некоторых устройств
+                    Buffer.from([0x02, 0x01, 0x00])  // Еще один вариант
                   ];
 
                   let commandIndex = 0;
