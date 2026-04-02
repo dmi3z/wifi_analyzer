@@ -196,18 +196,60 @@ ouiText.split("\n").forEach((line) => {
 // Setup Bluetooth events
 bluetooth.setupNobleEvents();
 
+// Очистка мертвых SSE соединений каждые 30 секунд
+setInterval(() => {
+  const initialCount = bluetooth.clients.length;
+  bluetooth.clients = bluetooth.clients.filter(client => {
+    return client && !client.destroyed && client.writable;
+  });
+  
+  if (bluetooth.clients.length !== initialCount) {
+    console.log(`[${now()}] Очистка SSE клиентов: ${initialCount} -> ${bluetooth.clients.length}`);
+  }
+}, 30000);
+
 // SSE endpoint
 app.get("/events", (req, res) => {
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.flushHeaders();
-
-  bluetooth.clients.push(res);
-
-  req.on("close", () => {
-    bluetooth.clients = bluetooth.clients.filter((c) => c !== res);
-  });
+  try {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Headers", "Cache-Control");
+    
+    // Отправляем начальное сообщение
+    res.write("data: connected\n\n");
+    res.flush();
+    
+    bluetooth.clients.push(res);
+    
+    console.log(`[${now()}] SSE клиент подключен, всего клиентов: ${bluetooth.clients.length}`);
+    
+    req.on("close", () => {
+      bluetooth.clients = bluetooth.clients.filter((c) => c !== res);
+      console.log(`[${now()}] SSE клиент отключен, осталось клиентов: ${bluetooth.clients.length}`);
+    });
+    
+    req.on("error", (err) => {
+      console.error(`[${now()}] SSE ошибка:`, err.message);
+      bluetooth.clients = bluetooth.clients.filter((c) => c !== res);
+    });
+    
+    // Таймаут для предотвращения бесконечного подключения
+    req.setTimeout(30000, () => {
+      console.log(`[${now()}] SSE таймаут для клиента`);
+      if (!res.destroyed) {
+        res.end();
+      }
+      bluetooth.clients = bluetooth.clients.filter((c) => c !== res);
+    });
+    
+  } catch (error) {
+    console.error(`[${now()}] Ошибка SSE endpoint:`, error.message);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "SSE error" });
+    }
+  }
 });
 
 app.post("/bluetooth/off", (req, res) => {
