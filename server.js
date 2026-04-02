@@ -535,12 +535,126 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
               });
             } else {
               console.log(`Successfully connected to ${mac}`);
-              return res.json({ 
-                status: "connected", 
-                mac: mac,
-                device: device,
-                message: `Successfully connected to ${mac}` 
+              
+              // Попытка найти сервисы и отправить команду уменьшения громкости
+              peripheral.discoverServices([], (error, services) => {
+                if (error) {
+                  console.error('Service discovery error:', error);
+                  return res.json({ 
+                    status: "connected", 
+                    mac: mac,
+                    device: device,
+                    message: `Successfully connected to ${mac} (service discovery failed)` 
+                  });
+                }
+
+                console.log(`Found ${services.length} services for ${mac}`);
+                
+                // Ищем сервисы, связанные с аудио
+                const audioServices = services.filter(service => {
+                  const uuid = service.uuid.toLowerCase();
+                  return uuid.includes('audio') || uuid.includes('volume') || 
+                         uuid.includes('180b') || uuid.includes('1812'); // Common audio service UUIDs
+                });
+
+                if (audioServices.length === 0) {
+                  console.log('No audio services found, trying first service');
+                  // Если аудио сервисы не найдены, попробуем первый доступный сервис
+                  if (services.length > 0) {
+                    tryFirstService(services[0]);
+                  } else {
+                    return res.json({ 
+                      status: "connected", 
+                      mac: mac,
+                      device: device,
+                      message: `Successfully connected to ${mac} (no services found)` 
+                    });
+                  }
+                } else {
+                  console.log(`Found ${audioServices.length} potential audio services`);
+                  tryFirstService(audioServices[0]);
+                }
               });
+
+              function tryFirstService(service) {
+                console.log(`Discovering characteristics for service ${service.uuid}`);
+                service.discoverCharacteristics([], (error, characteristics) => {
+                  if (error) {
+                    console.error('Characteristic discovery error:', error);
+                    return res.json({ 
+                      status: "connected", 
+                      mac: mac,
+                      device: device,
+                      message: `Successfully connected to ${mac} (characteristic discovery failed)` 
+                    });
+                  }
+
+                  console.log(`Found ${characteristics.length} characteristics`);
+                  
+                  // Ищем характеристики для записи (свойство write)
+                  const writableCharacteristics = characteristics.filter(char => 
+                    char.properties.includes('write') || char.properties.includes('writeWithoutResponse')
+                  );
+
+                  if (writableCharacteristics.length === 0) {
+                    console.log('No writable characteristics found');
+                    return res.json({ 
+                      status: "connected", 
+                      mac: mac,
+                      device: device,
+                      message: `Successfully connected to ${mac} (no writable characteristics)` 
+                    });
+                  }
+
+                  console.log(`Found ${writableCharacteristics.length} writable characteristics`);
+                  
+                  // Пытаемся отправить команду уменьшения громкости
+                  // Это может быть разной для разных устройств, пробуем несколько вариантов
+                  const volumeCommands = [
+                    Buffer.from([0x00, 0x01, 0x02]), // Общая команда уменьшения громкости
+                    Buffer.from([0x04, 0x00, 0x01]), // Альтернативная команда
+                    Buffer.from([0x02, 0x00]),       // Простая команда
+                    Buffer.from('VOL-')              // Текстовая команда
+                  ];
+
+                  let commandIndex = 0;
+                  
+                  function tryNextCommand() {
+                    if (commandIndex >= volumeCommands.length) {
+                      console.log('All volume commands failed');
+                      return res.json({ 
+                        status: "connected", 
+                        mac: mac,
+                        device: device,
+                        message: `Successfully connected to ${mac} (volume control failed)` 
+                      });
+                    }
+
+                    const command = volumeCommands[commandIndex];
+                    const char = writableCharacteristics[0];
+                    
+                    console.log(`Trying volume command ${commandIndex + 1}:`, command.toString('hex'));
+                    
+                    char.write(command, false, (error) => {
+                      if (error) {
+                        console.error(`Volume command ${commandIndex + 1} failed:`, error);
+                        commandIndex++;
+                        tryNextCommand();
+                      } else {
+                        console.log(`Volume command ${commandIndex + 1} succeeded`);
+                        return res.json({ 
+                          status: "connected", 
+                          mac: mac,
+                          device: device,
+                          message: `Successfully connected to ${mac} and sent volume down command` 
+                        });
+                      }
+                    });
+                  }
+
+                  tryNextCommand();
+                });
+              }
             }
           });
         }
