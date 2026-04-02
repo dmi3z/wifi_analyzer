@@ -183,53 +183,6 @@ async function detector(devicePath) {
   }
 }
 
-async function connectDisconnectLoop(mac) {
-  try {
-    const devicePath = "/org/bluez/hci0/" + mac;
-    console.log(`Проверка устройства ${devicePath} для цикла connect/disconnect...`);
-    
-    const obj = await bus.getProxyObject("org.bluez", devicePath);
-    let device;
-    
-    try {
-      device = obj.getInterface(interfaceName);
-    } catch (err) {
-      console.error(`Устройство ${devicePath} не найдено для цикла:`, err.message);
-      return;
-    }
-
-    console.log("Начало цикла connect/disconnect...");
-
-    while (counter !== 10) {
-      console.log("Попытка подключиться...");
-      try {
-        await device.Connect();
-      } catch (e) {
-        /* игнорируем ошибки */
-      }
-
-      // Подождать 1 секунду
-      await new Promise((r) => setTimeout(r, 1000));
-
-      console.log("Отключение...");
-      try {
-        await device.Disconnect();
-      } catch (e) {
-        /* игнорируем ошибки */
-      }
-
-      // Подождать 1 секунду
-      await new Promise((r) => setTimeout(r, 1000));
-
-      counter++;
-    }
-
-    console.log("Конец цикла connect/disconnect...");
-  } catch (err) {
-    console.error("Ошибка при подключении к D-Bus:", err);
-  }
-}
-
 ///// =======
 
 ouiText.split("\n").forEach((line) => {
@@ -239,10 +192,6 @@ ouiText.split("\n").forEach((line) => {
   if (m) ouiMap[m[1].toLowerCase().replace(/-/g, ":")] = m[2].trim();
 });
 
-function lookupMacLocal(bssid) {
-  const prefix = bssid.toLowerCase().split(":").slice(0, 3).join(":");
-  return ouiMap[prefix] || "unknown";
-}
 
 // Setup Bluetooth events
 bluetooth.setupNobleEvents();
