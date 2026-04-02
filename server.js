@@ -239,7 +239,9 @@ app.get("/events", (req, res) => {
     
     // Отправляем начальное сообщение
     res.write("data: connected\n\n");
-    res.flush();
+    if (res.flush) {
+      res.flush();
+    }
     
     console.log(`[${now()}] Начальное сообщение отправлено`);
     
@@ -261,7 +263,9 @@ app.get("/events", (req, res) => {
       if (!res.destroyed && res.writable) {
         try {
           res.write("data: ping\n\n");
-          res.flush();
+          if (res.flush) {
+            res.flush();
+          }
           console.log(`[${now()}] Ping отправлен`);
         } catch (err) {
           console.error(`[${now()}] Ошибка отправки ping:`, err.message);
