@@ -822,7 +822,7 @@ function handleDevicePreparation(peripheral, mac, device, res) {
 // Отправка команды громкости
 app.post("/bluetooth/volume/:mac", async (req, res) => {
   const mac = req.params.mac.toLowerCase();
-  const { command, commandType } = req.body; // command: hex string, commandType: 'up'/'down'/'set'
+  const { command, commandType, action } = req.body; // action: 'read'/'write'
   
   try {
     // Проверяем что устройство подключено
@@ -834,7 +834,76 @@ app.post("/bluetooth/volume/:mac", async (req, res) => {
       });
     }
 
-    const { writableCharacteristics } = connectedInfo;
+    const { writableCharacteristics, readableCharacteristics, peripheral } = connectedInfo;
+    
+    // Если нужно сначала прочитать характеристики
+    if (action === 'read' || !writableCharacteristics) {
+      console.log(`Reading characteristics for ${mac}...`);
+      
+      // Находим все характеристики для чтения
+      peripheral.discoverServices([], (error, services) => {
+        if (error) {
+          return res.status(500).json({ error: "Service discovery failed" });
+        }
+
+        let allCharacteristics = [];
+        let servicesProcessed = 0;
+
+        services.forEach(service => {
+          service.discoverCharacteristics([], (error, characteristics) => {
+            if (error) return;
+            
+            allCharacteristics.push(...characteristics);
+            servicesProcessed++;
+            
+            if (servicesProcessed === services.length) {
+              // Фильтруем читаемые характеристики
+              const readable = allCharacteristics.filter(char => 
+                char.properties.includes('read')
+              );
+              
+              // Сохраняем для будущего использования
+              connectedInfo.readableCharacteristics = readable;
+              if (writableCharacteristics) {
+                connectedInfo.writableCharacteristics = writableCharacteristics;
+              }
+              connectedDevices.set(mac, connectedInfo);
+              
+              // Читаем первые несколько характеристик
+              readCharacteristics(readable.slice(0, 5), 0, [], res, mac);
+            }
+          });
+        });
+      });
+      
+      function readCharacteristics(characteristics, index, results, res, mac) {
+        if (index >= characteristics.length) {
+          return res.json({
+            status: "read_complete",
+            mac: mac,
+            characteristics: results,
+            message: `Read ${results.length} characteristics`
+          });
+        }
+
+        const char = characteristics[index];
+        char.read((error, data) => {
+          if (!error && data) {
+            results.push({
+              uuid: char.uuid,
+              properties: char.properties,
+              data: data.toString('hex'),
+              dataBuffer: Array.from(data)
+            });
+          }
+          
+          readCharacteristics(characteristics, index + 1, results, res, mac);
+        });
+      }
+      
+      return;
+    }
+
     if (!writableCharacteristics || writableCharacteristics.length === 0) {
       return res.status(404).json({ 
         error: "No writable characteristics", 
@@ -842,7 +911,7 @@ app.post("/bluetooth/volume/:mac", async (req, res) => {
       });
     }
 
-    // Определяем команду на основе типа
+    // Расширенный набор команд для разных устройств
     let volumeCommands = [];
     
     if (commandType === 'down') {
@@ -850,13 +919,22 @@ app.post("/bluetooth/volume/:mac", async (req, res) => {
         Buffer.from([0x01, 0x00]),       // Volume Down для 2b29
         Buffer.from([0x00, 0x01]),       // Уменьшение на 1
         Buffer.from([0x01, 0x02]),       // Уменьшение громкости v2
-        Buffer.from([0x03, 0x01])        // Volume down альтернатива
+        Buffer.from([0x03, 0x01]),       // Volume down альтернатива
+        Buffer.from([0x00, 0x00]),       // Минимальная громкость
+        Buffer.from([0x80, 0x00]),       // Установка 0%
+        Buffer.from([0x01]),             // Single byte volume down
+        Buffer.from([0x02]),             // Single byte command 2
+        Buffer.from([0x00, 0x80, 0x00]), // 3-byte command
+        Buffer.from([0xA0, 0x01])        // Alternative format
       ];
     } else if (commandType === 'up') {
       volumeCommands = [
         Buffer.from([0x02, 0x00]),       // Volume Up
         Buffer.from([0x00, 0xFF]),       // Увеличение на 1
-        Buffer.from([0xFF, 0x00])        // Максимальная громкость
+        Buffer.from([0xFF, 0x00]),       // Максимальная громкость
+        Buffer.from([0xFF]),             // Single byte max
+        Buffer.from([0x00, 0xFF, 0x00]), // 3-byte max
+        Buffer.from([0xA0, 0x02])        // Alternative up
       ];
     } else if (commandType === 'set' && command) {
       // Пользовательская команда в hex
@@ -868,18 +946,28 @@ app.post("/bluetooth/volume/:mac", async (req, res) => {
           message: "Command must be valid hex string" 
         });
       }
+    } else if (commandType === 'mute') {
+      volumeCommands = [
+        Buffer.from([0x00, 0x00]),       // Mute/Min volume
+        Buffer.from([0x00]),             // Single byte mute
+        Buffer.from([0x80, 0x00]),       // Alternative mute
+        Buffer.from([0xA0, 0x00])        // Another mute format
+      ];
     } else {
-      // По умолчанию - volume down
+      // По умолчанию - расширенный набор volume down
       volumeCommands = [
         Buffer.from([0x01, 0x00]),       // Volume Down для 2b29
         Buffer.from([0x02, 0x00]),       // Volume Up (для проверки)
         Buffer.from([0x00, 0x80]),       // Установка громкости 50%
         Buffer.from([0x00, 0x00]),       // Минимальная громкость
         Buffer.from([0x00, 0x01]),       // Уменьшение на 1
-        Buffer.from([0xFF, 0x00]),       // Максимальная громкость (для теста)
+        Buffer.from([0xFF, 0x00]),       // Максимальная громкость
         Buffer.from([0x00, 0x10]),       // Громкость 16/255
         Buffer.from([0x01, 0x02]),       // Уменьшение громкости v2
-        Buffer.from([0x03, 0x01])        // Volume down альтернатива
+        Buffer.from([0x03, 0x01]),       // Volume down альтернатива
+        Buffer.from([0x01]),             // Single byte
+        Buffer.from([0x80, 0x00]),       // Alternative format
+        Buffer.from([0xA0, 0x01])        // Another format
       ];
     }
 
@@ -889,20 +977,20 @@ app.post("/bluetooth/volume/:mac", async (req, res) => {
       if (commandIndex >= volumeCommands.length) {
         console.log('All volume commands failed');
         return res.json({ 
-          status: "connected", 
+          status: "failed", 
           mac: mac,
-          message: `All volume commands failed` 
+          message: `All ${volumeCommands.length} volume commands failed` 
         });
       }
 
       const cmd = volumeCommands[commandIndex];
       const char = writableCharacteristics[0];
       
-      console.log(`Trying volume command ${commandIndex + 1}:`, cmd.toString('hex'));
+      console.log(`Trying volume command ${commandIndex + 1}/${volumeCommands.length}:`, cmd.toString('hex'), `(${cmd.length} bytes)`);
       
       // Добавляем таймаут для операции записи
       const writeTimeout = setTimeout(() => {
-        console.error(`Volume command ${commandIndex + 1} timeout`);
+        console.error(`Volume command ${commandIndex + 1} timeout after 3s`);
         commandIndex++;
         tryNextCommand();
       }, 3000); // 3 секунды на ответ
@@ -910,16 +998,18 @@ app.post("/bluetooth/volume/:mac", async (req, res) => {
       char.write(cmd, false, (error) => {
         clearTimeout(writeTimeout);
         if (error) {
-          console.error(`Volume command ${commandIndex + 1} failed:`, error);
+          console.error(`Volume command ${commandIndex + 1} failed:`, error.message || error);
           commandIndex++;
           tryNextCommand();
         } else {
-          console.log(`Volume command ${commandIndex + 1} succeeded`);
+          console.log(`Volume command ${commandIndex + 1} succeeded:`, cmd.toString('hex'));
           return res.json({ 
             status: "success", 
             mac: mac,
             command: cmd.toString('hex'),
-            message: `Volume command sent successfully` 
+            commandIndex: commandIndex + 1,
+            totalCommands: volumeCommands.length,
+            message: `Volume command sent successfully (attempt ${commandIndex + 1}/${volumeCommands.length})` 
           });
         }
       });
