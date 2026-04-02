@@ -10,6 +10,24 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Глобальная обработка ошибок
+process.on('uncaughtException', (error) => {
+  console.error(`[${now()}] Uncaught Exception:`, error.message);
+  console.error(`[${now()}] Stack:`, error.stack);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error(`[${now()}] Unhandled Rejection at:`, promise, 'reason:', reason);
+});
+
+// Обработка ошибок Express
+app.use((error, req, res, next) => {
+  console.error(`[${now()}] Express error:`, error.message);
+  if (!res.headersSent) {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 const PORT = 3000;
 
 const ouiText = fs.readFileSync("oui.txt", "utf8");
@@ -219,7 +237,11 @@ app.get("/events", (req, res) => {
       if (!res.headersSent) {
         res.status(408).json({ error: "Request timeout" });
       } else {
-        res.end();
+        try {
+          res.end();
+        } catch (e) {
+          console.log(`[${now()}] Ошибка закрытия:`, e.message);
+        }
       }
     });
     
@@ -238,12 +260,16 @@ app.get("/events", (req, res) => {
     }
     
     // Отправляем начальное сообщение
-    res.write("data: connected\n\n");
-    if (res.flush) {
-      res.flush();
+    try {
+      res.write("data: connected\n\n");
+      if (res.flush) {
+        res.flush();
+      }
+      console.log(`[${now()}] Начальное сообщение отправлено`);
+    } catch (writeError) {
+      console.error(`[${now()}] Ошибка записи:`, writeError.message);
+      return;
     }
-    
-    console.log(`[${now()}] Начальное сообщение отправлено`);
     
     bluetooth.clients.push(res);
     console.log(`[${now()}] SSE клиент добавлен, всего клиентов: ${bluetooth.clients.length}`);
@@ -258,8 +284,13 @@ app.get("/events", (req, res) => {
       bluetooth.clients = bluetooth.clients.filter((c) => c !== res);
     });
     
+    res.on("error", (err) => {
+      console.error(`[${now()}] Response ошибка:`, err.message);
+      bluetooth.clients = bluetooth.clients.filter((c) => c !== res);
+    });
+    
     // Проверка соединения через 1 секунду
-    setTimeout(() => {
+    const pingInterval = setInterval(() => {
       if (!res.destroyed && res.writable) {
         try {
           res.write("data: ping\n\n");
@@ -269,14 +300,24 @@ app.get("/events", (req, res) => {
           console.log(`[${now()}] Ping отправлен`);
         } catch (err) {
           console.error(`[${now()}] Ошибка отправки ping:`, err.message);
+          clearInterval(pingInterval);
+          bluetooth.clients = bluetooth.clients.filter((c) => c !== res);
         }
       } else {
-        console.log(`[${now()}] Соединение неактивно через 1 секунду`);
+        console.log(`[${now()}] Соединение неактивно, останавливаем ping`);
+        clearInterval(pingInterval);
+        bluetooth.clients = bluetooth.clients.filter((c) => c !== res);
       }
     }, 1000);
     
+    // Очистка при закрытии
+    req.on("close", () => {
+      clearInterval(pingInterval);
+    });
+    
   } catch (error) {
-    console.error(`[${now()}] Ошибка SSE endpoint:`, error.message);
+    console.error(`[${now()}] Критическая ошибка SSE endpoint:`, error.message);
+    console.error(`[${now()}] Stack:`, error.stack);
     if (!res.headersSent) {
       res.status(500).json({ error: "SSE error", details: error.message });
     }
