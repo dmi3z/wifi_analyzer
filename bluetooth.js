@@ -567,6 +567,7 @@ function floodVolumeCommands(mac, res) {
       
       let scanTimeout;
       let found = false;
+      let responseSent = false;
       
       const onDiscover = (p) => {
         console.log(`Discovered device during flood scan: ${p.address} (looking for ${mac})`);
@@ -586,7 +587,7 @@ function floodVolumeCommands(mac, res) {
         noble.stopScanning();
         console.log(`Scan completed. Devices discovered during scan: ${found ? 'Target found' : 'Target not found'}`);
         
-        if (!found) {
+        if (!found && !responseSent) {
           // Пробуем еще раз с перезагрузкой сканирования
           console.log('First scan failed, trying second scan...');
           setTimeout(() => {
@@ -594,11 +595,12 @@ function floodVolumeCommands(mac, res) {
               noble.startScanning([], true);
               console.log('Started second scan attempt');
               
-              setTimeout(() => {
+              const secondTimeout = setTimeout(() => {
                 noble.stopScanning();
                 noble.removeListener('discover', onDiscover);
                 
-                if (!found) {
+                if (!responseSent) {
+                  responseSent = true;
                   return res.status(404).json({ 
                     error: "Peripheral not found", 
                     message: `Device ${mac} not found after 10 seconds of scanning. Make sure device is powered on and within range.` 
@@ -801,10 +803,13 @@ function floodVolumeCommands(mac, res) {
     }
 
     // Автоматическое отключение через 10 секунд
-    setTimeout(() => {
+    const timeoutId = setTimeout(() => {
       console.log('10 seconds elapsed, stopping flood...');
       cleanup();
     }, 10000);
+
+    // Сохраняем timeout ID для очистки
+    cleanup.timeoutId = timeoutId;
 
   } catch (error) {
     console.error(`Error during flood for ${mac}:`, error);
