@@ -611,10 +611,10 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
             
             // Проверяем состояние подключения
             if (peripheral.state === 'connected') {
-              console.log(`Device ${mac} already connected, attempting volume control...`);
+              console.log(`Device ${mac} already connected, attempting device preparation...`);
               
-              // Устройство уже подключено, пробуем отправить команду громкости
-              return handleVolumeControl(peripheral, mac, device, res);
+              // Устройство уже подключено, подготавливаем его для управления громкостью
+              return handleDevicePreparation(peripheral, mac, device, res);
             }
             
             peripheral.connect((error) => {
@@ -627,8 +627,8 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
             } else {
               console.log(`Successfully connected to ${mac}`);
               
-              // После успешного подключения отправляем команду громкости
-              return handleVolumeControl(peripheral, mac, device, res);
+              // После успешного подключения подготавливаем устройство для управления громкостью
+              return handleDevicePreparation(peripheral, mac, device, res);
             }
           });
         }
@@ -656,10 +656,10 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
     // Если peripheral найден, подключаемся напрямую
       // Проверяем состояние подключения
       if (peripheral.state === 'connected') {
-        console.log(`Device ${mac} already connected, attempting volume control...`);
+        console.log(`Device ${mac} already connected, attempting device preparation...`);
         
-        // Устройство уже подключено, пробуем отправить команду громкости
-        return handleVolumeControl(peripheral, mac, device, res);
+        // Устройство уже подключено, подготавливаем его для управления громкостью
+        return handleDevicePreparation(peripheral, mac, device, res);
       }
       
       peripheral.connect((error) => {
@@ -687,28 +687,28 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
   }
 });
 
-// Функция для управления громкостью
-function handleVolumeControl(peripheral, mac, device, res) {
-  console.log(`Starting volume control for ${mac}`);
+// Функция для подготовки устройства к управлению громкостью
+function handleDevicePreparation(peripheral, mac, device, res) {
+  console.log(`Starting device preparation for ${mac}`);
   
   // Добавляем устройство в список подключенных
   connectedDevices.set(mac, { peripheral, device, lastRSSI: device.rssi });
   
   // Добавляем общий таймаут для всего процесса
   const overallTimeout = setTimeout(() => {
-    console.log(`Volume control timeout for ${mac}`);
+    console.log(`Device preparation timeout for ${mac}`);
     return res.json({ 
       status: "connected", 
       mac: mac,
       device: device,
-      message: `Successfully connected to ${mac} (volume control timeout)` 
+      message: `Successfully connected to ${mac} (device preparation timeout)` 
     });
   }, 15000); // 15 секунд на весь процесс
 
   // Запускаем периодическое обновление RSSI для подключенного устройства
   startRSSIUpdates(peripheral, mac, device);
 
-  // Попытка найти сервисы и отправить команду уменьшения громкости
+  // Попытка найти сервисы и характеристики для управления громкостью
   peripheral.discoverServices([], (error, services) => {
     if (error) {
       clearTimeout(overallTimeout);
@@ -801,9 +801,76 @@ function handleVolumeControl(peripheral, mac, device, res) {
 
       console.log(`Found ${writableCharacteristics.length} writable characteristics`);
       
-      // Пытаемся отправить команду уменьшения громкости
-      // Используем правильные команды для характеристики 2b29 (Volume Control)
-      const volumeCommands = [
+      // Сохраняем writable characteristics для будущего использования
+      const connectedInfo = connectedDevices.get(mac);
+      if (connectedInfo) {
+        connectedInfo.writableCharacteristics = writableCharacteristics;
+        connectedDevices.set(mac, connectedInfo);
+      }
+      
+      clearTimeout(overallTimeout);
+      return res.json({ 
+        status: "connected", 
+        mac: mac,
+        device: device,
+        message: `Successfully connected to ${mac} (ready for volume commands)` 
+      });
+    });
+  }
+}
+
+// Отправка команды громкости
+app.post("/bluetooth/volume/:mac", async (req, res) => {
+  const mac = req.params.mac.toLowerCase();
+  const { command, commandType } = req.body; // command: hex string, commandType: 'up'/'down'/'set'
+  
+  try {
+    // Проверяем что устройство подключено
+    const connectedInfo = connectedDevices.get(mac);
+    if (!connectedInfo) {
+      return res.status(404).json({ 
+        error: "Device not connected", 
+        message: "Device not found in connected devices" 
+      });
+    }
+
+    const { writableCharacteristics } = connectedInfo;
+    if (!writableCharacteristics || writableCharacteristics.length === 0) {
+      return res.status(404).json({ 
+        error: "No writable characteristics", 
+        message: "Device connected but no writable characteristics found" 
+      });
+    }
+
+    // Определяем команду на основе типа
+    let volumeCommands = [];
+    
+    if (commandType === 'down') {
+      volumeCommands = [
+        Buffer.from([0x01, 0x00]),       // Volume Down для 2b29
+        Buffer.from([0x00, 0x01]),       // Уменьшение на 1
+        Buffer.from([0x01, 0x02]),       // Уменьшение громкости v2
+        Buffer.from([0x03, 0x01])        // Volume down альтернатива
+      ];
+    } else if (commandType === 'up') {
+      volumeCommands = [
+        Buffer.from([0x02, 0x00]),       // Volume Up
+        Buffer.from([0x00, 0xFF]),       // Увеличение на 1
+        Buffer.from([0xFF, 0x00])        // Максимальная громкость
+      ];
+    } else if (commandType === 'set' && command) {
+      // Пользовательская команда в hex
+      try {
+        volumeCommands = [Buffer.from(command, 'hex')];
+      } catch (e) {
+        return res.status(400).json({ 
+          error: "Invalid command", 
+          message: "Command must be valid hex string" 
+        });
+      }
+    } else {
+      // По умолчанию - volume down
+      volumeCommands = [
         Buffer.from([0x01, 0x00]),       // Volume Down для 2b29
         Buffer.from([0x02, 0x00]),       // Volume Up (для проверки)
         Buffer.from([0x00, 0x80]),       // Установка громкости 50%
@@ -814,56 +881,59 @@ function handleVolumeControl(peripheral, mac, device, res) {
         Buffer.from([0x01, 0x02]),       // Уменьшение громкости v2
         Buffer.from([0x03, 0x01])        // Volume down альтернатива
       ];
+    }
 
-      let commandIndex = 0;
-      
-      function tryNextCommand() {
-        if (commandIndex >= volumeCommands.length) {
-          clearTimeout(overallTimeout);
-          console.log('All volume commands failed');
-          return res.json({ 
-            status: "connected", 
-            mac: mac,
-            device: device,
-            message: `Successfully connected to ${mac} (volume control failed)` 
-          });
-        }
-
-        const command = volumeCommands[commandIndex];
-        const char = writableCharacteristics[0];
-        
-        console.log(`Trying volume command ${commandIndex + 1}:`, command.toString('hex'));
-        
-        // Добавляем таймаут для операции записи
-        const writeTimeout = setTimeout(() => {
-          console.error(`Volume command ${commandIndex + 1} timeout`);
-          commandIndex++;
-          tryNextCommand();
-        }, 3000); // 3 секунды на ответ
-        
-        char.write(command, false, (error) => {
-          clearTimeout(writeTimeout);
-          if (error) {
-            console.error(`Volume command ${commandIndex + 1} failed:`, error);
-            commandIndex++;
-            tryNextCommand();
-          } else {
-            clearTimeout(overallTimeout);
-            console.log(`Volume command ${commandIndex + 1} succeeded`);
-            return res.json({ 
-              status: "connected", 
-              mac: mac,
-              device: device,
-              message: `Successfully connected to ${mac} and sent volume down command` 
-            });
-          }
+    let commandIndex = 0;
+    
+    function tryNextCommand() {
+      if (commandIndex >= volumeCommands.length) {
+        console.log('All volume commands failed');
+        return res.json({ 
+          status: "connected", 
+          mac: mac,
+          message: `All volume commands failed` 
         });
       }
 
-      tryNextCommand();
+      const cmd = volumeCommands[commandIndex];
+      const char = writableCharacteristics[0];
+      
+      console.log(`Trying volume command ${commandIndex + 1}:`, cmd.toString('hex'));
+      
+      // Добавляем таймаут для операции записи
+      const writeTimeout = setTimeout(() => {
+        console.error(`Volume command ${commandIndex + 1} timeout`);
+        commandIndex++;
+        tryNextCommand();
+      }, 3000); // 3 секунды на ответ
+      
+      char.write(cmd, false, (error) => {
+        clearTimeout(writeTimeout);
+        if (error) {
+          console.error(`Volume command ${commandIndex + 1} failed:`, error);
+          commandIndex++;
+          tryNextCommand();
+        } else {
+          console.log(`Volume command ${commandIndex + 1} succeeded`);
+          return res.json({ 
+            status: "success", 
+            mac: mac,
+            command: cmd.toString('hex'),
+            message: `Volume command sent successfully` 
+          });
+        }
+      });
+    }
+
+    tryNextCommand();
+  } catch (error) {
+    console.error(`Error sending volume command to ${mac}:`, error);
+    res.status(500).json({ 
+      error: "Volume command error", 
+      message: `Error sending volume command to ${mac}: ${error.message}` 
     });
   }
-}
+});
 
 // Отключение от Bluetooth устройства
 app.post("/bluetooth/disconnect/:mac", async (req, res) => {
