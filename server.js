@@ -16,6 +16,7 @@ const ouiMap = {};
 let devices = {};
 let history = [];
 let clients = [];
+let connectedDevices = new Map(); // Храним подключенные устройства для периодического обновления RSSI
 
 ouiText.split("\n").forEach((line) => {
   const m = line.match(
@@ -289,6 +290,48 @@ function ensureMonitorMode(iface) {
 }
 
 //// BLE functions
+
+// Функция для периодического обновления RSSI подключенных устройств
+function startRSSIUpdates(peripheral, mac, device) {
+  console.log(`Starting RSSI updates for ${mac}`);
+  
+  const updateInterval = setInterval(() => {
+    try {
+      // Получаем текущий RSSI из peripheral
+      const currentRSSI = peripheral.rssi || device.rssi;
+      
+      if (currentRSSI !== undefined) {
+        // Обновляем данные устройства
+        const updatedDevice = {
+          ...device,
+          rssi: currentRSSI,
+          last_seen: Date.now()
+        };
+        
+        devices[mac] = updatedDevice;
+        
+        // Обновляем в connectedDevices
+        const connectedInfo = connectedDevices.get(mac);
+        if (connectedInfo) {
+          connectedInfo.lastRSSI = currentRSSI;
+          connectedDevices.set(mac, connectedInfo);
+        }
+        
+        // Отправляем через SSE
+        broadcast("device", updatedDevice);
+        console.log(`Updated RSSI for ${mac}: ${currentRSSI} dBm`);
+      }
+    } catch (error) {
+      console.error(`RSSI update error for ${mac}:`, error);
+    }
+  }, 2000); // Обновляем каждые 2 секунды
+  
+  // Сохраняем interval для очистки при отключении
+  connectedDevices.set(mac, { 
+    ...connectedDevices.get(mac), 
+    updateInterval 
+  });
+}
 
 function parseManufacturerData(buf) {
   if (!buf) return null;
@@ -609,6 +652,9 @@ app.post("/bluetooth/connect/:mac", async (req, res) => {
 function handleVolumeControl(peripheral, mac, device, res) {
   console.log(`Starting volume control for ${mac}`);
   
+  // Добавляем устройство в список подключенных
+  connectedDevices.set(mac, { peripheral, device, lastRSSI: device.rssi });
+  
   // Добавляем общий таймаут для всего процесса
   const overallTimeout = setTimeout(() => {
     console.log(`Volume control timeout for ${mac}`);
@@ -619,6 +665,9 @@ function handleVolumeControl(peripheral, mac, device, res) {
       message: `Successfully connected to ${mac} (volume control timeout)` 
     });
   }, 15000); // 15 секунд на весь процесс
+
+  // Запускаем периодическое обновление RSSI для подключенного устройства
+  startRSSIUpdates(peripheral, mac, device);
 
   // Попытка найти сервисы и отправить команду уменьшения громкости
   peripheral.discoverServices([], (error, services) => {
@@ -791,6 +840,16 @@ app.post("/bluetooth/disconnect/:mac", async (req, res) => {
         message: "Device not found in noble peripherals" 
       });
     }
+
+    // Останавливаем RSSI обновления
+    const connectedInfo = connectedDevices.get(mac);
+    if (connectedInfo && connectedInfo.updateInterval) {
+      clearInterval(connectedInfo.updateInterval);
+      console.log(`Stopped RSSI updates for ${mac}`);
+    }
+    
+    // Удаляем из списка подключенных
+    connectedDevices.delete(mac);
 
     peripheral.disconnect();
     console.log(`Disconnected from ${mac}`);
