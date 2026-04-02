@@ -481,7 +481,6 @@ app.post("/bluetooth/connect-disconnect-loop/:mac", async (req, res) => {
           console.log(`Устройство ${mac} не в кеше Noble, проверяем подключенные устройства...`);
           
           // Проверяем все подключенные устройства
-          const noble = require("@abandonware/noble");
           const connectedPeripherals = Object.values(noble._peripherals).filter(p => p.state === 'connected');
           console.log(`Подключенные устройства: ${connectedPeripherals.map(p => p.address).join(', ')}`);
           
@@ -571,27 +570,84 @@ app.post("/bluetooth/connect-disconnect-loop/:mac", async (req, res) => {
         
         // Проверяем состояние подключения
         if (peripheral.state === 'connected') {
-          console.log(`Устройство ${mac} уже подключено, сразу запускаем детектор...`);
+          console.log(`Устройство ${mac} уже подключено, ищем правильный путь в BlueZ...`);
           
-          // Ждем немного чтобы устройство зарегистрировалось в BlueZ
-          setTimeout(() => {
-            // Запускаем детектор для конкретного устройства
-            detector(devicePath).catch((err) => {
-              console.error(`Ошибка запуска детектора для ${mac}:`, err);
-            });
+          // Ищем правильный путь устройства в BlueZ
+          try {
+            // Пробуем разные варианты пути
+            const possiblePaths = [
+              `/org/bluez/hci0/${mac.replace(/:/g, '')}`,
+              `/org/bluez/hci0/dev_${mac.replace(/:/g, '').toUpperCase()}`,
+              `/org/bluez/hci0/${mac}`,
+              `/org/bluez/hci0/dev_${mac.replace(/:/g, '')}`
+            ];
             
-            // Запускаем цикл в фоне
+            let foundPath = null;
+            
+            for (const path of possiblePaths) {
+              try {
+                console.log(`Пробуем путь: ${path}`);
+                const testObj = await bus.getProxyObject(BLUEZ, path);
+                const testDevice = testObj.getInterface("org.bluez.Device1");
+                foundPath = path;
+                console.log(`Найден правильный путь: ${path}`);
+                break;
+              } catch (err) {
+                console.log(`Путь ${path} не работает: ${err.message}`);
+              }
+            }
+            
+            if (foundPath) {
+              // Ждем немного чтобы устройство зарегистрировалось в BlueZ
+              setTimeout(() => {
+                // Запускаем детектор для конкретного устройства
+                detector(foundPath).catch((err) => {
+                  console.error(`Ошибка запуска детектора для ${mac}:`, err);
+                });
+                
+                // Запускаем цикл в фоне
+                connectDisconnectLoop(mac.replace(/:/g, ''));
+                
+                res.json({ 
+                  status: "loop_started", 
+                  mac: mac,
+                  devicePath: foundPath,
+                  message: `Connect/disconnect loop and monitoring started for ${mac} (device already connected)` 
+                });
+              }, 2000);
+              
+              return;
+            } else {
+              console.log(`Не найден путь в BlueZ, используем Noble напрямую...`);
+              
+              // Запускаем цикл через Noble
+              connectDisconnectLoop(mac.replace(/:/g, ''));
+              
+              res.json({ 
+                status: "loop_started", 
+                mac: mac,
+                devicePath: "Noble-only",
+                message: `Connect/disconnect loop started for ${mac} (Noble mode, no BlueZ monitoring)` 
+              });
+              
+              return;
+            }
+            
+          } catch (searchError) {
+            console.error(`Ошибка поиска пути в BlueZ:`, searchError.message);
+            
+            // Запускаем цикл через Noble
             connectDisconnectLoop(mac.replace(/:/g, ''));
             
             res.json({ 
               status: "loop_started", 
               mac: mac,
-              devicePath: devicePath,
-              message: `Connect/disconnect loop and monitoring started for ${mac} (device already connected)` 
+              devicePath: "Noble-only",
+              message: `Connect/disconnect loop started for ${mac} (Noble mode, no BlueZ monitoring)` 
             });
-          }, 2000);
-          
-          return;
+            
+            return;
+          }
         }
         
         // Подключаемся чтобы зарегистрировать в BlueZ
