@@ -321,7 +321,6 @@ function ensureMonitorMode(iface) {
 // Switch to monitor mode
 function switchToMonitorMode(iface = "wlan2") {
   try {
-    stopTshark();
     execSync(`sudo ip link set ${iface} down`);
     execSync(`sudo iw dev ${iface} set type monitor`);
     execSync(`sudo ip link set ${iface} up`);
