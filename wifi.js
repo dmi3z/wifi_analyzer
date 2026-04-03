@@ -310,7 +310,6 @@ function startTshark(bssid, channel, iface) {
                 if (packetType === '0x20' || packetType === '0x08') {
                   stats.clients.add(src);
                   stats.lastSeen.set(src, Date.now());
-                  console.log(`Client detected: ${src} (to router, type: ${packetType})`);
                 }
               }
               // Роутер -> Клиент (только данные)
@@ -319,7 +318,7 @@ function startTshark(bssid, channel, iface) {
                 if (packetType === '0x20' || packetType === '0x08') {
                   stats.clients.add(dst);
                   stats.lastSeen.set(dst, Date.now());
-                  console.log(`Client detected: ${dst} (from router, type: ${packetType})`);
+              
                 }
               }
             }
