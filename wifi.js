@@ -286,34 +286,47 @@ function startAirodump(bssid, channel, iface) {
         const content = fs.readFileSync(clientsFile, 'utf8');
         const lines = content.split('\n');
         
+        console.log(`CSV file has ${lines.length} lines`);
+        
         let inClientSection = false;
         const now = Date.now();
+        let clientCount = 0;
         
-        lines.forEach(line => {
+        lines.forEach((line, index) => {
           if (line.includes('Station MAC')) {
             inClientSection = true;
+            console.log(`Found client section at line ${index}`);
             return;
           }
           if (line.trim() === '' && inClientSection) {
             inClientSection = false;
+            console.log(`End of client section at line ${index}`);
             return;
           }
           
           if (inClientSection && line.trim()) {
             const fields = line.split(',').map(f => f.trim());
+            console.log(`Line ${index}: ${fields.length} fields:`, fields);
+            
             if (fields.length >= 6) {
               const [mac, , , , packets, ,] = fields;
               
               if (mac && mac !== 'Station MAC' && isValidMAC(mac)) {
                 stats.clients.add(mac.toLowerCase());
                 stats.lastSeen.set(mac.toLowerCase(), now);
-                stats.totalPackets += parseInt(packets) || 0;
+                const packetCount = parseInt(packets) || 0;
+                stats.totalPackets += packetCount;
                 
-                console.log(`Client detected: ${mac} (${packets} packets)`);
+                console.log(`Client detected: ${mac} (${packetCount} packets)`);
+                clientCount++;
               }
             }
           }
         });
+        
+        console.log(`Processed ${clientCount} clients this interval`);
+      } else {
+        console.log('CSV file not found yet, waiting...');
       }
     } catch (e) {
       console.error('CSV parse error:', e.message);
