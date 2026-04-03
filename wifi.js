@@ -198,34 +198,32 @@ function resetStats() {
 }
 
 function stopTshark() {
+  console.log("Stopping all tshark processes...");
+  
+  // Убиваем все tshark процессы
+  exec("sudo killall tshark", (error, stdout, stderr) => {
+    if (error) {
+      console.log("No tshark processes to kill or killall failed:", error.message);
+    } else {
+      console.log("All tshark processes killed");
+    }
+  });
+  
+  // Также пробуем убить конкретный процесс если он есть
   if (tsharkProcess) {
-    console.log("Stopping old tshark...");
     const pid = tsharkProcess.pid;
-    
-    // Используем sudo для убийства процесса
     exec(`sudo kill -TERM ${pid}`, (error) => {
-      if (error) {
-        console.log("Failed to kill tshark gracefully:", error.message);
-      }
-      
-      // Force kill через 1 секунду
       setTimeout(() => {
         exec(`sudo kill -KILL ${pid}`, (killError) => {
-          if (killError) {
-            console.log("Force kill failed:", killError.message);
-          } else {
-            console.log(`tshark process ${pid} force killed`);
-          }
+          console.log(`tshark process ${pid} kill attempt completed`);
         });
       }, 1000);
     });
-    
     tsharkProcess = null;
-    resetStats();
-    console.log("tshark stopped and stats reset");
-  } else {
-    console.log("No tshark process to stop");
   }
+  
+  resetStats();
+  console.log("tshark stopped and stats reset");
 }
 
 function startTshark(bssid, channel, iface) {
