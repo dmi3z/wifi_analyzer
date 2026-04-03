@@ -230,12 +230,27 @@ function startTshark(bssid, channel, iface) {
         if (line.startsWith('{')) {
           const pkt = JSON.parse(line);
           stats.totalPackets++;
-          if (pkt._source?.layers?.eapol) stats.handshakeCount++;
+          
+          // Отладочный вывод для первых 10 пакетов
+          if (stats.totalPackets <= 10) {
+            console.log(`Packet ${stats.totalPackets}:`, JSON.stringify(pkt._source?.layers?.wlan || {}));
+          }
+          
+          if (pkt._source?.layers?.eapol) {
+            stats.handshakeCount++;
+            console.log(`Handshake detected! Total: ${stats.handshakeCount}`);
+          }
           const src = pkt._source?.layers?.["wlan.sa"];
           const dst = pkt._source?.layers?.["wlan.da"];
           const bssid = pkt._source?.layers?.["wlan.bssid"];
-          if (src && src !== bssid) stats.clients.add(src);
-          if (dst && dst !== bssid) stats.clients.add(dst);
+          if (src && src !== bssid) {
+            stats.clients.add(src);
+            console.log(`Client detected: ${src}`);
+          }
+          if (dst && dst !== bssid) {
+            stats.clients.add(dst);
+            console.log(`Client detected: ${dst}`);
+          }
         }
       });
     } catch (e) {
