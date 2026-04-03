@@ -210,6 +210,21 @@ ouiText.split("\n").forEach((line) => {
   if (m) ouiMap[m[1].toLowerCase().replace(/-/g, ":")] = m[2].trim();
 });
 
+// Function to get device name from MAC using OUI
+function getDeviceName(mac) {
+  if (!mac || mac === 'ff:ff:ff:ff:ff:ff') return mac;
+  
+  // Extract first 3 octets and convert to OUI format
+  const oui = mac.substring(0, 8).toLowerCase().replace(/:/g, '-');
+  const manufacturer = ouiMap[oui];
+  
+  if (manufacturer) {
+    return `${manufacturer} (${mac})`;
+  }
+  
+  return mac;
+}
+
 
 // Setup Bluetooth events
 bluetooth.setupNobleEvents();
@@ -1299,10 +1314,13 @@ app.get("/wifi/stream", (req, res) => {
   });
 
   const interval = setInterval(() => {
+    const stats = wifi.getStats();
+    const clientsWithNames = Array.from(stats.clients).map(mac => getDeviceName(mac));
+    
     res.write(
       `data: ${JSON.stringify({
-        ...wifi.getStats(),
-        clients: Array.from(wifi.getStats().clients),
+        ...stats,
+        clients: clientsWithNames,
         target: wifi.getCurrentTarget(),
       })}\n\n`,
     );
