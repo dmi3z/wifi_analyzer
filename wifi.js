@@ -252,11 +252,13 @@ function stopTshark() {
 
 function startAirodump(bssid, channel, iface) {
   console.log(`Starting airodump-ng for ${bssid} on channel ${channel}`);
+  
+  const { spawn, execSync } = require("child_process");
+  
   execSync(`sudo iw dev ${iface} set channel ${channel}`);
   resetStats();
 
   // Очищаем старые CSV файлы airodump-ng
-  const { execSync } = require("child_process");
   try {
     execSync("sudo rm -f /tmp/airodump-*.csv /tmp/airodump-*.kismet.csv /tmp/airodump-*.log.csv");
     console.log("Cleaned up old airodump-ng files");
@@ -264,8 +266,6 @@ function startAirodump(bssid, channel, iface) {
     console.log("No old files to clean");
   }
 
-  const { spawn } = require("child_process");
-  
   const args = [
     "airodump-ng",
     "--bssid", bssid,
