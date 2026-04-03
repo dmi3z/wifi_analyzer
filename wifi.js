@@ -218,7 +218,15 @@ function startTshark(bssid, channel, iface) {
     "-Y",
     "wlan",
     "-T",
-    "json",
+    "fields",
+    "-e",
+    "wlan.sa",
+    "-e",
+    "wlan.da",
+    "-e",
+    "wlan.bssid",
+    "-e",
+    "eapol",
   ]);
 
   console.log(`tshark started with PID: ${tsharkProcess.pid}`);
@@ -227,34 +235,34 @@ function startTshark(bssid, channel, iface) {
     try {
       const lines = data.toString().trim().split('\n');
       lines.forEach(line => {
-        if (line.startsWith('{')) {
-          const pkt = JSON.parse(line);
+        if (line.trim()) {
+          const fields = line.split('\t');
+          const [src, dst, bssid, eapol] = fields;
+          
           stats.totalPackets++;
           
           // Отладочный вывод для первых 10 пакетов
           if (stats.totalPackets <= 10) {
-            console.log(`Packet ${stats.totalPackets}:`, JSON.stringify(pkt._source?.layers?.wlan || {}));
+            console.log(`Packet ${stats.totalPackets}: src=${src}, dst=${dst}, bssid=${bssid}, eapol=${eapol}`);
           }
           
-          if (pkt._source?.layers?.eapol) {
+          if (eapol && eapol !== '') {
             stats.handshakeCount++;
             console.log(`Handshake detected! Total: ${stats.handshakeCount}`);
           }
-          const src = pkt._source?.layers?.["wlan.sa"];
-          const dst = pkt._source?.layers?.["wlan.da"];
-          const bssid = pkt._source?.layers?.["wlan.bssid"];
-          if (src && src !== bssid) {
+          
+          if (src && src !== bssid && src !== '') {
             stats.clients.add(src);
             console.log(`Client detected: ${src}`);
           }
-          if (dst && dst !== bssid) {
+          if (dst && dst !== bssid && dst !== '') {
             stats.clients.add(dst);
             console.log(`Client detected: ${dst}`);
           }
         }
       });
     } catch (e) {
-      // ignore incomplete JSON chunks
+      console.error('Parse error:', e.message);
     }
   });
 
