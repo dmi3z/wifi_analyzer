@@ -309,48 +309,53 @@ function startAirodump(bssid, channel, iface) {
         // Читаем файл клиентов
         const clientsFile = '/home/pi/airodump-01.csv';
         if (fs.existsSync(clientsFile)) {
-          const content = fs.readFileSync(clientsFile, 'utf8');
-          const lines = content.split('\n');
-          
-          console.log(`CSV file has ${lines.length} lines`);
-          
-          let inClientSection = false;
-          const now = Date.now();
-          let clientCount = 0;
-          
-          lines.forEach((line, index) => {
-            if (line.includes('Station MAC')) {
-              inClientSection = true;
-              console.log(`Found client section at line ${index}`);
-              return;
-            }
-            if (line.trim() === '' && inClientSection) {
-              inClientSection = false;
-              console.log(`End of client section at line ${index}`);
-              return;
-            }
+          try {
+            const content = fs.readFileSync(clientsFile, 'utf8');
+            const lines = content.split('\n');
             
-            if (inClientSection && line.trim()) {
-              const fields = line.split(',').map(f => f.trim());
-              console.log(`Line ${index}: ${fields.length} fields:`, fields);
+            console.log(`CSV file has ${lines.length} lines`);
+            console.log("First 10 lines:", lines.slice(0, 10));
+            
+            let inClientSection = false;
+            const now = Date.now();
+            let clientCount = 0;
+            
+            lines.forEach((line, index) => {
+              if (line.includes('Station MAC')) {
+                inClientSection = true;
+                console.log(`Found client section at line ${index}`);
+                return;
+              }
+              if (line.trim() === '' && inClientSection) {
+                inClientSection = false;
+                console.log(`End of client section at line ${index}`);
+                return;
+              }
               
-              if (fields.length >= 6) {
-                const [mac, , , , packets, ,] = fields;
+              if (inClientSection && line.trim()) {
+                const fields = line.split(',').map(f => f.trim());
+                console.log(`Line ${index}: ${fields.length} fields:`, fields);
                 
-                if (mac && mac !== 'Station MAC' && isValidMAC(mac)) {
-                  stats.clients.add(mac.toLowerCase());
-                  stats.lastSeen.set(mac.toLowerCase(), now);
-                  const packetCount = parseInt(packets) || 0;
-                  stats.totalPackets += packetCount;
+                if (fields.length >= 6) {
+                  const [mac, , , , packets, ,] = fields;
                   
-                  console.log(`Client detected: ${mac} (${packetCount} packets)`);
-                  clientCount++;
+                  if (mac && mac !== 'Station MAC' && isValidMAC(mac)) {
+                    stats.clients.add(mac.toLowerCase());
+                    stats.lastSeen.set(mac.toLowerCase(), now);
+                    const packetCount = parseInt(packets) || 0;
+                    stats.totalPackets += packetCount;
+                    
+                    console.log(`Client detected: ${mac} (${packetCount} packets)`);
+                    clientCount++;
+                  }
                 }
               }
-            }
-          });
-          
-          console.log(`Processed ${clientCount} clients this interval`);
+            });
+            
+            console.log(`Processed ${clientCount} clients this interval`);
+          } catch (e) {
+            console.error('CSV read error:', e.message);
+          }
         } else {
           console.log('CSV file not found yet, waiting...');
         }
