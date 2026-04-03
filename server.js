@@ -1315,12 +1315,19 @@ app.get("/wifi/stream", (req, res) => {
 
   const interval = setInterval(() => {
     const stats = wifi.getStats();
-    const clientsWithNames = Array.from(stats.clients).map(mac => getDeviceName(mac));
+    const clientsArray = Array.from(stats.clients);
+    
+    // Ограничиваем количество клиентов для отображения
+    const maxClients = 10;
+    const limitedClients = clientsArray.slice(0, maxClients);
+    
+    const clientsWithNames = limitedClients.map(mac => getDeviceName(mac));
     
     res.write(
       `data: ${JSON.stringify({
         ...stats,
         clients: clientsWithNames,
+        totalClientsFound: clientsArray.length,
         target: wifi.getCurrentTarget(),
       })}\n\n`,
     );
