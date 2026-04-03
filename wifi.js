@@ -190,7 +190,7 @@ let stats = {
 // Очистка неактивных клиентов каждые 30 секунд
 setInterval(() => {
   const now = Date.now();
-  const timeout = 60000; // 1 минута неактивности
+  const timeout = 10000; // 10 секунд неактивности
   
   for (const [mac, lastSeen] of stats.lastSeen.entries()) {
     if (now - lastSeen > timeout) {
@@ -274,61 +274,57 @@ function startTshark(bssid, channel, iface) {
   console.log(`tshark started with PID: ${tsharkProcess.pid}`);
 
   tsharkProcess.stdout.on("data", (data) => {
-    try {
-      const lines = data.toString().trim().split('\n');
-      lines.forEach(line => {
-        if (line.trim()) {
-          const fields = line.split('\t');
-          const [src, dst, bssid, packetType, eapol] = fields;
-          
-          // Считаем только пакеты связанные с нашей целевой сетью
-          if (src && dst && bssid && bssid.toLowerCase() === targetBssid.toLowerCase()) {
-            stats.totalPackets++;
-            
-            // Отладочный вывод для первых 10 пакетов
-            if (stats.totalPackets <= 10) {
-              console.log(`Packet ${stats.totalPackets}: src=${src}, dst=${dst}, type=${packetType}, eapol=${eapol}`);
-            }
-            
-            // Считаем handshake пакеты
-            if (eapol && eapol !== '') {
-              stats.handshakeCount++;
-              console.log(`Handshake detected! Total: ${stats.handshakeCount}`);
-            }
-            
-            // Добавляем только реальные клиенты (не broadcast и не BSSID)
-            if (src !== '' && dst !== '' && 
-                src !== 'ff:ff:ff:ff:ff:ff' && dst !== 'ff:ff:ff:ff:ff:ff') {
-              
-              const srcLower = src.toLowerCase();
-              const dstLower = dst.toLowerCase();
-              const bssidLower = bssid.toLowerCase();
-              
-              // Клиент -> Роутер (только данные: QoS Data, Data)
-              if (srcLower !== bssidLower && dstLower === bssidLower) {
-                // Только пакеты данных (0x20 = QoS Data, 0x08 = Data)
-                if (packetType === '0x20' || packetType === '0x08') {
-                  stats.clients.add(src);
-                  stats.lastSeen.set(src, Date.now());
-                }
-              }
-              // Роутер -> Клиент (только данные)
-              else if (srcLower === bssidLower && dstLower !== bssidLower) {
-                // Только пакеты данных
-                if (packetType === '0x20' || packetType === '0x08') {
-                  stats.clients.add(dst);
-                  stats.lastSeen.set(dst, Date.now());
-              
-                }
-              }
-            }
-          }
+  try {
+    const lines = data.toString().trim().split('\n');
+    lines.forEach(line => {
+      if (!line.trim()) return;
+
+      const [src, dst, bssid, packetTypeRaw, eapol] = line.split('\t');
+      if (!src || !dst || !bssid) return;
+
+      const bssidLower = bssid.toLowerCase();
+      if (bssidLower !== targetBssid.toLowerCase()) return;
+
+      const srcLower = src.toLowerCase();
+      const dstLower = dst.toLowerCase();
+      const packetType = packetTypeRaw.toLowerCase().replace('0x','');
+
+      stats.totalPackets++;
+      if (stats.totalPackets <= 10) {
+        console.log(`Packet ${stats.totalPackets}: src=${src}, dst=${dst}, type=${packetType}, eapol=${eapol}`);
+      }
+
+      // Handshake
+      if (eapol && eapol !== '') {
+        stats.handshakeCount++;
+        console.log(`Handshake detected! Total: ${stats.handshakeCount}`);
+      }
+
+      // Игнорируем broadcast/multicast
+      const isValidMAC = (mac) => mac !== 'ff:ff:ff:ff:ff:ff' && !mac.startsWith('33:33') && !mac.startsWith('01:00:5e');
+      if (!isValidMAC(srcLower) || !isValidMAC(dstLower)) return;
+
+      // Клиент → AP
+      if (srcLower !== bssidLower && dstLower === bssidLower) {
+        if (['20','08','1d','19','18'].includes(packetType)) {
+          stats.clients.add(srcLower);
+          stats.lastSeen.set(srcLower, Date.now());
+          console.log(`Client detected: ${srcLower} (to router, type: ${packetType})`);
         }
-      });
-    } catch (e) {
-      console.error('Parse error:', e.message);
-    }
-  });
+      }
+      // AP → Клиент
+      else if (srcLower === bssidLower && dstLower !== bssidLower) {
+        if (['20','08','1d','19'].includes(packetType)) {
+          stats.clients.add(dstLower);
+          stats.lastSeen.set(dstLower, Date.now());
+          console.log(`Client detected: ${dstLower} (from router, type: ${packetType})`);
+        }
+      }
+    });
+  } catch (e) {
+    console.error('Parse error:', e.message);
+  }
+});
 
   tsharkProcess.stderr.on("data", (d) => {
     console.error("tshark error:", d.toString());
