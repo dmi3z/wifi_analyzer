@@ -268,6 +268,7 @@ function startAirodump(bssid, channel, iface) {
 
   const args = [
     "airodump-ng",
+    "--bssid", bssid,
     "--channel", channel.toString(),
     "--write", "./airodump",
     "--output-format", "csv",
