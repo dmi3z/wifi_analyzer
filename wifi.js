@@ -200,15 +200,31 @@ function resetStats() {
 function stopTshark() {
   if (tsharkProcess) {
     console.log("Stopping old tshark...");
+    const pid = tsharkProcess.pid;
     tsharkProcess.kill('SIGTERM');
+    
     setTimeout(() => {
       if (tsharkProcess) {
+        console.log("Force killing tshark...");
         tsharkProcess.kill('SIGKILL');
       }
+      
+      // Проверяем что процесс умер
+      exec(`kill -0 ${pid} 2>/dev/null`, (error) => {
+        if (error) {
+          console.log(`tshark process ${pid} successfully killed`);
+        } else {
+          console.log(`tshark process ${pid} still running, force kill...`);
+          exec(`sudo kill -9 ${pid}`);
+        }
+      });
     }, 1000);
+    
     tsharkProcess = null;
     resetStats();
     console.log("tshark stopped and stats reset");
+  } else {
+    console.log("No tshark process to stop");
   }
 }
 
