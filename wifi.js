@@ -251,11 +251,11 @@ function startTshark(bssid, channel, iface) {
             console.log(`Handshake detected! Total: ${stats.handshakeCount}`);
           }
           
-          if (src && src !== bssid && src !== '') {
+          if (src && src !== bssid && src !== '' && src !== 'ff:ff:ff:ff:ff:ff') {
             stats.clients.add(src);
             console.log(`Client detected: ${src}`);
           }
-          if (dst && dst !== bssid && dst !== '') {
+          if (dst && dst !== bssid && dst !== '' && dst !== 'ff:ff:ff:ff:ff:ff') {
             stats.clients.add(dst);
             console.log(`Client detected: ${dst}`);
           }

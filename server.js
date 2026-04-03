@@ -1288,7 +1288,7 @@ app.post("/target", (req, res) => {
 });
 
 // SSE endpoint
-app.get("/stream", (req, res) => {
+app.get("/wifi/start-capture", (req, res) => {
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
@@ -1309,6 +1309,16 @@ app.get("/stream", (req, res) => {
     clearInterval(interval);
     console.log("Client disconnected from SSE");
   });
+});
+
+// Stop Wi-Fi capture
+app.post("/wifi/stop-capture", (req, res) => {
+  try {
+    wifi.stopTshark();
+    res.json({ status: "stopped", message: "Wi-Fi capture stopped" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Get list of Wi-Fi interfaces
