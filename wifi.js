@@ -273,9 +273,14 @@ function startTshark(bssid, channel, iface) {
 
   console.log(`tshark started with PID: ${tsharkProcess.pid}`);
 
-  tsharkProcess.stdout.on("data", (data) => {
+// Интервал для удаления "мертвых" клиентов (мс)
+const CLIENT_TIMEOUT = 30000; // 30 секунд
+
+tsharkProcess.stdout.on("data", (data) => {
   try {
     const lines = data.toString().trim().split('\n');
+    const now = Date.now();
+
     lines.forEach(line => {
       if (!line.trim()) return;
 
@@ -294,37 +299,73 @@ function startTshark(bssid, channel, iface) {
         console.log(`Packet ${stats.totalPackets}: src=${src}, dst=${dst}, type=${packetType}, eapol=${eapol}`);
       }
 
-      // Handshake
+      // -------------------------------
+      // 1️⃣ Добавляем handshake / EAPOL как клиента
+      // -------------------------------
       if (eapol && eapol !== '') {
         stats.handshakeCount++;
+        [srcLower, dstLower].forEach(mac => {
+          if (mac !== bssidLower && isValidMAC(mac)) {
+            stats.clients.add(mac);
+            stats.lastSeen.set(mac, now);
+          }
+        });
         console.log(`Handshake detected! Total: ${stats.handshakeCount}`);
       }
 
-      // Игнорируем broadcast/multicast
-      const isValidMAC = (mac) => mac !== 'ff:ff:ff:ff:ff:ff' && !mac.startsWith('33:33') && !mac.startsWith('01:00:5e');
+      // -------------------------------
+      // 2️⃣ Игнорируем broadcast/multicast
+      // -------------------------------
       if (!isValidMAC(srcLower) || !isValidMAC(dstLower)) return;
 
-      // Клиент → AP
+      // -------------------------------
+      // 3️⃣ Клиент → AP
+      // -------------------------------
       if (srcLower !== bssidLower && dstLower === bssidLower) {
-        if (['20','08','1d','19','18'].includes(packetType)) {
+        if (['20','08','1d','19','18','0b','0c'].includes(packetType)) {
           stats.clients.add(srcLower);
-          stats.lastSeen.set(srcLower, Date.now());
-          console.log(`Client detected: ${srcLower} (to router, type: ${packetType})`);
+          stats.lastSeen.set(srcLower, now);
+          console.log(`Client detected: ${srcLower} (to AP, type: ${packetType})`);
         }
       }
-      // AP → Клиент
+      // -------------------------------
+      // 4️⃣ AP → Клиент
+      // -------------------------------
       else if (srcLower === bssidLower && dstLower !== bssidLower) {
-        if (['20','08','1d','19'].includes(packetType)) {
+        if (['20','08','1d','19','0b','0c'].includes(packetType)) {
           stats.clients.add(dstLower);
-          stats.lastSeen.set(dstLower, Date.now());
-          console.log(`Client detected: ${dstLower} (from router, type: ${packetType})`);
+          stats.lastSeen.set(dstLower, now);
+          console.log(`Client detected: ${dstLower} (from AP, type: ${packetType})`);
         }
       }
     });
+
+    // -------------------------------
+    // 5️⃣ Удаляем "мертвые" клиенты
+    // -------------------------------
+    for (const [mac, ts] of stats.lastSeen.entries()) {
+      if (now - ts > CLIENT_TIMEOUT) {
+        stats.clients.delete(mac);
+        stats.lastSeen.delete(mac);
+      }
+    }
+
   } catch (e) {
     console.error('Parse error:', e.message);
   }
 });
+
+// -------------------------------
+// 6️⃣ Вспомогательная функция
+// -------------------------------
+function isValidMAC(mac) {
+  // исключаем broadcast/multicast
+  if (!mac) return false;
+  mac = mac.toLowerCase();
+  if (mac === 'ff:ff:ff:ff:ff:ff') return false;
+  if (mac.startsWith('33:33') || mac.startsWith('01:00:5e')) return false;
+  return true;
+}
 
   tsharkProcess.stderr.on("data", (d) => {
     console.error("tshark error:", d.toString());
