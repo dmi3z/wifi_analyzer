@@ -1298,9 +1298,9 @@ app.get("/stream", (req, res) => {
   const interval = setInterval(() => {
     res.write(
       `data: ${JSON.stringify({
-        ...wifi.stats,
-        clients: Array.from(wifi.stats.clients),
-        target: wifi.currentTarget,
+        ...wifi.getStats(),
+        clients: Array.from(wifi.getStats().clients),
+        target: wifi.getCurrentTarget(),
       })}\n\n`,
     );
   }, 1000);

@@ -397,5 +397,9 @@ module.exports = {
   // Global data
   currentTarget,
   stats,
-  tsharkProcess
+  tsharkProcess,
+  
+  // Accessors for global data
+  getCurrentTarget: () => currentTarget,
+  getStats: () => stats
 };
