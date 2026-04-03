@@ -286,28 +286,32 @@ function startTshark(bssid, channel, iface) {
         }
 
         // -------------------------------
-        // 2️⃣ Игнорируем broadcast/multicast
+        // 2️⃣ Для клиентов - игнорируем broadcast/multicast
         // -------------------------------
         if (!isValidMAC(srcLower) || !isValidMAC(dstLower)) return;
 
         // -------------------------------
-        // 3️⃣ Клиент → AP
+        // 3️⃣ Клиент → AP (строгая фильтрация)
         // -------------------------------
         if (srcLower !== bssidLower && dstLower === bssidLower) {
-          if (['20','08','1d','19','18','0b','0c','5'].includes(packetType)) {
-            stats.clients.add(srcLower);
-            stats.lastSeen.set(srcLower, now);
-            console.log(`Client detected: ${srcLower} (to AP, type: ${packetType})`);
+          if (['20','08'].includes(packetType)) { // Только Data и QoS Data
+            if (isValidMAC(srcLower) && !srcLower.startsWith('02:') && !srcLower.startsWith('00:')) {
+              stats.clients.add(srcLower);
+              stats.lastSeen.set(srcLower, now);
+              console.log(`Client detected: ${srcLower} (to AP, type: ${packetType})`);
+            }
           }
         }
         // -------------------------------
-        // 4️⃣ AP → Клиент
+        // 4️⃣ AP → Клиент (строгая фильтрация)
         // -------------------------------
         else if (srcLower === bssidLower && dstLower !== bssidLower) {
-          if (['20','08','1d','19','0b','0c','5'].includes(packetType)) {
-            stats.clients.add(dstLower);
-            stats.lastSeen.set(dstLower, now);
-            console.log(`Client detected: ${dstLower} (from AP, type: ${packetType})`);
+          if (['20','08'].includes(packetType)) { // Только Data и QoS Data
+            if (isValidMAC(dstLower) && !dstLower.startsWith('02:') && !dstLower.startsWith('00:')) {
+              stats.clients.add(dstLower);
+              stats.lastSeen.set(dstLower, now);
+              console.log(`Client detected: ${dstLower} (from AP, type: ${packetType})`);
+            }
           }
         }
 
