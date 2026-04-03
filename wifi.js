@@ -265,82 +265,29 @@ function startAirodump(bssid, channel, iface) {
   }
 
   const { spawn } = require("child_process");
-  tsharkProcess = spawn("sudo", [
+  
+  const args = [
     "airodump-ng",
     "--bssid", bssid,
     "--channel", channel.toString(),
     "--write", "/tmp/airodump",
     "--output-format", "csv",
     iface,
-  ]);
+  ];
+  
+  console.log("Running command:", "sudo", args.join(" "));
+  
+  tsharkProcess = spawn("sudo", args);
 
   console.log(`airodump-ng started with PID: ${tsharkProcess.pid}`);
 
-  // Читаем CSV файлы airodump-ng
-  const fs = require('fs');
-  const csvInterval = setInterval(() => {
-    try {
-      // Читаем файл клиентов
-      const clientsFile = '/tmp/airodump-01.csv';
-      if (fs.existsSync(clientsFile)) {
-        const content = fs.readFileSync(clientsFile, 'utf8');
-        const lines = content.split('\n');
-        
-        console.log(`CSV file has ${lines.length} lines`);
-        
-        let inClientSection = false;
-        const now = Date.now();
-        let clientCount = 0;
-        
-        lines.forEach((line, index) => {
-          if (line.includes('Station MAC')) {
-            inClientSection = true;
-            console.log(`Found client section at line ${index}`);
-            return;
-          }
-          if (line.trim() === '' && inClientSection) {
-            inClientSection = false;
-            console.log(`End of client section at line ${index}`);
-            return;
-          }
-          
-          if (inClientSection && line.trim()) {
-            const fields = line.split(',').map(f => f.trim());
-            console.log(`Line ${index}: ${fields.length} fields:`, fields);
-            
-            if (fields.length >= 6) {
-              const [mac, , , , packets, ,] = fields;
-              
-              if (mac && mac !== 'Station MAC' && isValidMAC(mac)) {
-                stats.clients.add(mac.toLowerCase());
-                stats.lastSeen.set(mac.toLowerCase(), now);
-                const packetCount = parseInt(packets) || 0;
-                stats.totalPackets += packetCount;
-                
-                console.log(`Client detected: ${mac} (${packetCount} packets)`);
-                clientCount++;
-              }
-            }
-          }
-        });
-        
-        console.log(`Processed ${clientCount} clients this interval`);
-      } else {
-        console.log('CSV file not found yet, waiting...');
-      }
-    } catch (e) {
-      console.error('CSV parse error:', e.message);
-    }
-  }, 2000); // Обновляем каждые 2 секунды
-
-  // Останавливаем интервал при закрытии процесса
-  tsharkProcess.on('close', () => {
-    clearInterval(csvInterval);
-    console.log('airodump-ng stopped');
+  // Добавляем больше логирования для отладки
+  tsharkProcess.stdout.on("data", (data) => {
+    console.log("airodump-ng stdout:", data.toString());
   });
 
   tsharkProcess.stderr.on("data", (d) => {
-    console.error("airodump-ng error:", d.toString());
+    console.error("airodump-ng stderr:", d.toString());
   });
 
   tsharkProcess.on("close", (code) => {
@@ -350,6 +297,74 @@ function startAirodump(bssid, channel, iface) {
   tsharkProcess.on("error", (err) => {
     console.error("airodump-ng process error:", err);
   });
+
+  // Ждем 3 секунды перед началом чтения CSV
+  setTimeout(() => {
+    console.log("Starting CSV parsing after 3 seconds delay...");
+    
+    // Читаем CSV файлы airodump-ng
+    const fs = require('fs');
+    const csvInterval = setInterval(() => {
+      try {
+        // Читаем файл клиентов
+        const clientsFile = '/tmp/airodump-01.csv';
+        if (fs.existsSync(clientsFile)) {
+          const content = fs.readFileSync(clientsFile, 'utf8');
+          const lines = content.split('\n');
+          
+          console.log(`CSV file has ${lines.length} lines`);
+          
+          let inClientSection = false;
+          const now = Date.now();
+          let clientCount = 0;
+          
+          lines.forEach((line, index) => {
+            if (line.includes('Station MAC')) {
+              inClientSection = true;
+              console.log(`Found client section at line ${index}`);
+              return;
+            }
+            if (line.trim() === '' && inClientSection) {
+              inClientSection = false;
+              console.log(`End of client section at line ${index}`);
+              return;
+            }
+            
+            if (inClientSection && line.trim()) {
+              const fields = line.split(',').map(f => f.trim());
+              console.log(`Line ${index}: ${fields.length} fields:`, fields);
+              
+              if (fields.length >= 6) {
+                const [mac, , , , packets, ,] = fields;
+                
+                if (mac && mac !== 'Station MAC' && isValidMAC(mac)) {
+                  stats.clients.add(mac.toLowerCase());
+                  stats.lastSeen.set(mac.toLowerCase(), now);
+                  const packetCount = parseInt(packets) || 0;
+                  stats.totalPackets += packetCount;
+                  
+                  console.log(`Client detected: ${mac} (${packetCount} packets)`);
+                  clientCount++;
+                }
+              }
+            }
+          });
+          
+          console.log(`Processed ${clientCount} clients this interval`);
+        } else {
+          console.log('CSV file not found yet, waiting...');
+        }
+      } catch (e) {
+        console.error('CSV parse error:', e.message);
+      }
+    }, 2000); // Обновляем каждые 2 секунды
+
+    // Останавливаем интервал при закрытии процесса
+    tsharkProcess.on('close', () => {
+      clearInterval(csvInterval);
+      console.log('airodump-ng stopped');
+    });
+  }, 3000); // Задержка 3 секунды
 }
 
 // Вспомогательная функция для проверки MAC
