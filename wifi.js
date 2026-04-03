@@ -225,14 +225,18 @@ function startTshark(bssid, channel, iface) {
 
   tsharkProcess.stdout.on("data", (data) => {
     try {
-      const packets = JSON.parse(data.toString());
-      packets.forEach((pkt) => {
-        stats.totalPackets++;
-        if (pkt._source?.layers?.eapol) stats.handshakeCount++;
-        const src = pkt._source?.layers?.["wlan.sa"];
-        const dst = pkt._source?.layers?.["wlan.da"];
-        if (src && src !== bssid) stats.clients.add(src);
-        if (dst && dst !== bssid) stats.clients.add(dst);
+      const lines = data.toString().trim().split('\n');
+      lines.forEach(line => {
+        if (line.startsWith('{')) {
+          const pkt = JSON.parse(line);
+          stats.totalPackets++;
+          if (pkt._source?.layers?.eapol) stats.handshakeCount++;
+          const src = pkt._source?.layers?.["wlan.sa"];
+          const dst = pkt._source?.layers?.["wlan.da"];
+          const bssid = pkt._source?.layers?.["wlan.bssid"];
+          if (src && src !== bssid) stats.clients.add(src);
+          if (dst && dst !== bssid) stats.clients.add(dst);
+        }
       });
     } catch (e) {
       // ignore incomplete JSON chunks
