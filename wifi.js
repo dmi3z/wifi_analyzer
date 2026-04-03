@@ -214,14 +214,14 @@ function resetStats() {
 }
 
 function stopTshark() {
-  console.log("Stopping all tshark processes...");
+  console.log("Stopping all airodump-ng processes...");
   
-  // Убиваем все tshark процессы
-  exec("sudo killall tshark", (error, stdout, stderr) => {
+  // Убиваем все airodump-ng процессы
+  exec("sudo killall airodump-ng", (error, stdout, stderr) => {
     if (error) {
-      console.log("No tshark processes to kill or killall failed:", error.message);
+      console.log("No airodump-ng processes to kill or killall failed:", error.message);
     } else {
-      console.log("All tshark processes killed");
+      console.log("All airodump-ng processes killed");
     }
   });
   
@@ -231,153 +231,121 @@ function stopTshark() {
     exec(`sudo kill -TERM ${pid}`, (error) => {
       setTimeout(() => {
         exec(`sudo kill -KILL ${pid}`, (killError) => {
-          console.log(`tshark process ${pid} kill attempt completed`);
+          console.log(`airodump-ng process ${pid} kill attempt completed`);
         });
       }, 1000);
     });
     tsharkProcess = null;
   }
   
+  // Очищаем временные файлы
+  try {
+    execSync("sudo rm -f /tmp/airodump-*.csv /tmp/airodump-*.kismet.csv /tmp/airodump-*.log.csv");
+    console.log("Cleaned up airodump-ng temp files");
+  } catch (e) {
+    console.log("No temp files to clean");
+  }
+  
   resetStats();
-  console.log("tshark stopped and stats reset");
+  console.log("airodump-ng stopped and stats reset");
 }
 
-function startTshark(bssid, channel, iface) {
-  console.log(`Starting capture for ${bssid} on channel ${channel}`);
+function startAirodump(bssid, channel, iface) {
+  console.log(`Starting airodump-ng for ${bssid} on channel ${channel}`);
   execSync(`sudo iw dev ${iface} set channel ${channel}`);
   resetStats();
 
-  // Сохраняем целевой BSSID для фильтрации
-  const targetBssid = bssid.toLowerCase();
+  // Очищаем старые CSV файлы airodump-ng
+  const { execSync } = require("child_process");
+  try {
+    execSync("sudo rm -f /tmp/airodump-*.csv /tmp/airodump-*.kismet.csv /tmp/airodump-*.log.csv");
+    console.log("Cleaned up old airodump-ng files");
+  } catch (e) {
+    console.log("No old files to clean");
+  }
 
   const { spawn } = require("child_process");
   tsharkProcess = spawn("sudo", [
-    "tshark",
-    "-i",
+    "airodump-ng",
+    "--bssid", bssid,
+    "--channel", channel.toString(),
+    "--write", "/tmp/airodump",
+    "--output-format", "csv",
     iface,
-    "-Y",
-    `wlan.bssid == ${bssid} || wlan.da == ${bssid} || wlan.sa == ${bssid}`,
-    "-T",
-    "fields",
-    "-e",
-    "wlan.sa",
-    "-e",
-    "wlan.da",
-    "-e",
-    "wlan.bssid",
-    "-e",
-    "wlan.fc.type_subtype",
-    "-e",
-    "eapol",
   ]);
 
-  console.log(`tshark started with PID: ${tsharkProcess.pid}`);
+  console.log(`airodump-ng started with PID: ${tsharkProcess.pid}`);
 
-// Интервал для удаления "мертвых" клиентов (мс)
-const CLIENT_TIMEOUT = 30000; // 30 секунд
-
-tsharkProcess.stdout.on("data", (data) => {
-  try {
-    const lines = data.toString().trim().split('\n');
-    const now = Date.now();
-
-    lines.forEach(line => {
-      if (!line.trim()) return;
-
-      const [src, dst, bssid, packetTypeRaw, eapol] = line.split('\t');
-      if (!src || !dst || !bssid) return;
-
-      const bssidLower = bssid.toLowerCase();
-      if (bssidLower !== targetBssid.toLowerCase()) return;
-
-      const srcLower = src.toLowerCase();
-      const dstLower = dst.toLowerCase();
-      const packetType = packetTypeRaw.toLowerCase().replace('0x','');
-
-      stats.totalPackets++;
-      if (stats.totalPackets <= 10) {
-        console.log(`Packet ${stats.totalPackets}: src=${src}, dst=${dst}, type=${packetType}, eapol=${eapol}`);
-      }
-
-      // -------------------------------
-      // 1️⃣ Добавляем handshake / EAPOL как клиента
-      // -------------------------------
-      if (eapol && eapol !== '') {
-        stats.handshakeCount++;
-        [srcLower, dstLower].forEach(mac => {
-          if (mac !== bssidLower && isValidMAC(mac)) {
-            stats.clients.add(mac);
-            stats.lastSeen.set(mac, now);
+  // Читаем CSV файлы airodump-ng
+  const fs = require('fs');
+  const csvInterval = setInterval(() => {
+    try {
+      // Читаем файл клиентов
+      const clientsFile = '/tmp/airodump-01.csv';
+      if (fs.existsSync(clientsFile)) {
+        const content = fs.readFileSync(clientsFile, 'utf8');
+        const lines = content.split('\n');
+        
+        let inClientSection = false;
+        const now = Date.now();
+        
+        lines.forEach(line => {
+          if (line.includes('Station MAC')) {
+            inClientSection = true;
+            return;
+          }
+          if (line.trim() === '' && inClientSection) {
+            inClientSection = false;
+            return;
+          }
+          
+          if (inClientSection && line.trim()) {
+            const fields = line.split(',').map(f => f.trim());
+            if (fields.length >= 6) {
+              const [mac, , , , packets, ,] = fields;
+              
+              if (mac && mac !== 'Station MAC' && isValidMAC(mac)) {
+                stats.clients.add(mac.toLowerCase());
+                stats.lastSeen.set(mac.toLowerCase(), now);
+                stats.totalPackets += parseInt(packets) || 0;
+                
+                console.log(`Client detected: ${mac} (${packets} packets)`);
+              }
+            }
           }
         });
-        console.log(`Handshake detected! Total: ${stats.handshakeCount}`);
       }
-
-      // -------------------------------
-      // 2️⃣ Игнорируем broadcast/multicast
-      // -------------------------------
-      if (!isValidMAC(srcLower) || !isValidMAC(dstLower)) return;
-
-      // -------------------------------
-      // 3️⃣ Клиент → AP
-      // -------------------------------
-      if (srcLower !== bssidLower && dstLower === bssidLower) {
-        if (['20','08','1d','19','18','0b','0c'].includes(packetType)) {
-          stats.clients.add(srcLower);
-          stats.lastSeen.set(srcLower, now);
-          console.log(`Client detected: ${srcLower} (to AP, type: ${packetType})`);
-        }
-      }
-      // -------------------------------
-      // 4️⃣ AP → Клиент
-      // -------------------------------
-      else if (srcLower === bssidLower && dstLower !== bssidLower) {
-        if (['20','08','1d','19','0b','0c'].includes(packetType)) {
-          stats.clients.add(dstLower);
-          stats.lastSeen.set(dstLower, now);
-          console.log(`Client detected: ${dstLower} (from AP, type: ${packetType})`);
-        }
-      }
-    });
-
-    // -------------------------------
-    // 5️⃣ Удаляем "мертвые" клиенты
-    // -------------------------------
-    for (const [mac, ts] of stats.lastSeen.entries()) {
-      if (now - ts > CLIENT_TIMEOUT) {
-        stats.clients.delete(mac);
-        stats.lastSeen.delete(mac);
-      }
+    } catch (e) {
+      console.error('CSV parse error:', e.message);
     }
+  }, 2000); // Обновляем каждые 2 секунды
 
-  } catch (e) {
-    console.error('Parse error:', e.message);
-  }
-});
+  // Останавливаем интервал при закрытии процесса
+  tsharkProcess.on('close', () => {
+    clearInterval(csvInterval);
+    console.log('airodump-ng stopped');
+  });
 
-// -------------------------------
-// 6️⃣ Вспомогательная функция
-// -------------------------------
+  tsharkProcess.stderr.on("data", (d) => {
+    console.error("airodump-ng error:", d.toString());
+  });
+
+  tsharkProcess.on("close", (code) => {
+    console.log(`airodump-ng stopped with code: ${code}`);
+  });
+
+  tsharkProcess.on("error", (err) => {
+    console.error("airodump-ng process error:", err);
+  });
+}
+
+// Вспомогательная функция для проверки MAC
 function isValidMAC(mac) {
-  // исключаем broadcast/multicast
   if (!mac) return false;
   mac = mac.toLowerCase();
   if (mac === 'ff:ff:ff:ff:ff:ff') return false;
   if (mac.startsWith('33:33') || mac.startsWith('01:00:5e')) return false;
   return true;
-}
-
-  tsharkProcess.stderr.on("data", (d) => {
-    console.error("tshark error:", d.toString());
-  });
-
-  tsharkProcess.on("close", (code) => {
-    console.log(`tshark stopped with code: ${code}`);
-  });
-
-  tsharkProcess.on("error", (err) => {
-    console.error("tshark process error:", err);
-  });
 }
 
 function ensureMonitorMode(iface) {
@@ -474,7 +442,7 @@ function setTarget(bssid, channel, iface) {
 
   ensureMonitorMode(newIface);
   stopTshark();
-  startTshark(currentTarget.bssid, currentTarget.channel, currentTarget.iface);
+  startAirodump(currentTarget.bssid, currentTarget.channel, currentTarget.iface);
 
   return { status: "target set", target: currentTarget };
 }
@@ -524,7 +492,7 @@ module.exports = {
   // Stats and monitoring
   resetStats,
   stopTshark,
-  startTshark,
+  startAirodump,
   ensureMonitorMode,
   
   // Global data
