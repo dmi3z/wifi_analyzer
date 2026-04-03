@@ -231,13 +231,16 @@ function startTshark(bssid, channel, iface) {
   execSync(`sudo iw dev ${iface} set channel ${channel}`);
   resetStats();
 
+  // Сохраняем целевой BSSID для фильтрации
+  const targetBssid = bssid.toLowerCase();
+
   const { spawn } = require("child_process");
   tsharkProcess = spawn("sudo", [
     "tshark",
     "-i",
     iface,
     "-Y",
-    "wlan",
+    `wlan.bssid == ${bssid} || wlan.da == ${bssid} || wlan.sa == ${bssid}`,
     "-T",
     "fields",
     "-e",
@@ -246,6 +249,8 @@ function startTshark(bssid, channel, iface) {
     "wlan.da",
     "-e",
     "wlan.bssid",
+    "-e",
+    "wlan.fc.type_subtype",
     "-e",
     "eapol",
   ]);
@@ -258,39 +263,40 @@ function startTshark(bssid, channel, iface) {
       lines.forEach(line => {
         if (line.trim()) {
           const fields = line.split('\t');
-          const [src, dst, bssid, eapol] = fields;
+          const [src, dst, bssid, packetType, eapol] = fields;
           
-          stats.totalPackets++;
-          
-          // Отладочный вывод для первых 10 пакетов
-          if (stats.totalPackets <= 10) {
-            console.log(`Packet ${stats.totalPackets}: src=${src}, dst=${dst}, bssid=${bssid}, eapol=${eapol}`);
-          }
-          
-          if (eapol && eapol !== '') {
-            stats.handshakeCount++;
-            console.log(`Handshake detected! Total: ${stats.handshakeCount}`);
-          }
-          
-          // Безопасная проверка и фильтрация клиентов
-          if (src && src !== bssid && src !== '' && src !== 'ff:ff:ff:ff:ff:ff') {
-            const srcLower = src.toLowerCase();
-            const bssidLower = (bssid || '').toLowerCase();
+          // Считаем только пакеты связанные с нашей целевой сетью
+          if (src && dst && bssid && bssid.toLowerCase() === targetBssid.toLowerCase()) {
+            stats.totalPackets++;
             
-            if (srcLower === bssidLower) {
-              // Это пакет от нашего роутера, добавляем destination если это клиент
-              if (dst && dst !== '' && dst !== 'ff:ff:ff:ff:ff:ff' && dst !== bssid) {
-                const dstLower = dst.toLowerCase();
-                if (dstLower !== bssidLower) {
-                  stats.clients.add(dst);
-                  console.log(`Client detected: ${dst}`);
-                }
-              }
-            } else {
-              // Это пакет от клиента, проверяем что он предназначен нашему роутеру
-              if (dst && dst.toLowerCase() === bssidLower) {
+            // Отладочный вывод для первых 10 пакетов
+            if (stats.totalPackets <= 10) {
+              console.log(`Packet ${stats.totalPackets}: src=${src}, dst=${dst}, type=${packetType}, eapol=${eapol}`);
+            }
+            
+            // Считаем handshake пакеты
+            if (eapol && eapol !== '') {
+              stats.handshakeCount++;
+              console.log(`Handshake detected! Total: ${stats.handshakeCount}`);
+            }
+            
+            // Добавляем только реальные клиенты (не broadcast и не BSSID)
+            if (src !== '' && dst !== '' && 
+                src !== 'ff:ff:ff:ff:ff:ff' && dst !== 'ff:ff:ff:ff:ff:ff') {
+              
+              const srcLower = src.toLowerCase();
+              const dstLower = dst.toLowerCase();
+              const bssidLower = bssid.toLowerCase();
+              
+              // Клиент -> Роутер
+              if (srcLower !== bssidLower && dstLower === bssidLower) {
                 stats.clients.add(src);
-                console.log(`Client detected: ${src}`);
+                console.log(`Client detected: ${src} (to router)`);
+              }
+              // Роутер -> Клиент  
+              else if (srcLower === bssidLower && dstLower !== bssidLower) {
+                stats.clients.add(dst);
+                console.log(`Client detected: ${dst} (from router)`);
               }
             }
           }
