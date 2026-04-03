@@ -259,8 +259,8 @@ function startTshark(bssid, channel, iface) {
         if (!src || !dst || !bssid || !packetTypeRaw) return;
 
         const bssidLower = bssid.toLowerCase();
-        // Убираем жесткую фильтрацию по BSSID - считаем все пакеты от/к целевой сети
-        if (bssidLower !== bssid.toLowerCase() && srcLower !== bssid.toLowerCase() && dstLower !== bssid.toLowerCase()) return;
+        // Фильтруем только пакеты от/к целевой сети
+        if (bssidLower !== bssid.toLowerCase()) return;
 
         const srcLower = src.toLowerCase();
         const dstLower = dst.toLowerCase();
@@ -294,7 +294,7 @@ function startTshark(bssid, channel, iface) {
         // 3️⃣ Клиент → AP
         // -------------------------------
         if (srcLower !== bssidLower && dstLower === bssidLower) {
-          if (['20','08','1d','19','18','0b','0c'].includes(packetType)) {
+          if (['20','08','1d','19','18','0b','0c','5'].includes(packetType)) {
             stats.clients.add(srcLower);
             stats.lastSeen.set(srcLower, now);
             console.log(`Client detected: ${srcLower} (to AP, type: ${packetType})`);
@@ -304,7 +304,7 @@ function startTshark(bssid, channel, iface) {
         // 4️⃣ AP → Клиент
         // -------------------------------
         else if (srcLower === bssidLower && dstLower !== bssidLower) {
-          if (['20','08','1d','19','0b','0c'].includes(packetType)) {
+          if (['20','08','1d','19','0b','0c','5'].includes(packetType)) {
             stats.clients.add(dstLower);
             stats.lastSeen.set(dstLower, now);
             console.log(`Client detected: ${dstLower} (from AP, type: ${packetType})`);
