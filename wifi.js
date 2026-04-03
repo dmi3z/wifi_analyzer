@@ -288,18 +288,18 @@ function startTshark(bssid, channel, iface) {
               const dstLower = dst.toLowerCase();
               const bssidLower = bssid.toLowerCase();
               
-              // Клиент -> Роутер (только данные, не probe/auth)
+              // Клиент -> Роутер (только данные: QoS Data, Data)
               if (srcLower !== bssidLower && dstLower === bssidLower) {
-                // Проверяем что это не служебный пакет
-                if (packetType !== '0x04' && packetType !== '0x08' && packetType !== '0x0b') {
+                // Только пакеты данных (0x20 = QoS Data, 0x08 = Data)
+                if (packetType === '0x20' || packetType === '0x08') {
                   stats.clients.add(src);
                   console.log(`Client detected: ${src} (to router, type: ${packetType})`);
                 }
               }
               // Роутер -> Клиент (только данные)
               else if (srcLower === bssidLower && dstLower !== bssidLower) {
-                // Проверяем что это не beacon или probe response
-                if (packetType !== '0x05' && packetType !== '0x08') {
+                // Только пакеты данных
+                if (packetType === '0x20' || packetType === '0x08') {
                   stats.clients.add(dst);
                   console.log(`Client detected: ${dst} (from router, type: ${packetType})`);
                 }
