@@ -255,6 +255,9 @@ function startTshark(bssid, channel, iface) {
         const [src, dst, bssid, packetTypeRaw, eapol] = line.split('\t');
         if (!src || !dst || !bssid) return;
 
+        // Проверяем что все поля определены
+        if (!src || !dst || !bssid || !packetTypeRaw) return;
+
         const bssidLower = bssid.toLowerCase();
         if (bssidLower !== bssid.toLowerCase()) return;
 
