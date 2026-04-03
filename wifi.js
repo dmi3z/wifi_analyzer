@@ -273,12 +273,20 @@ function startTshark(bssid, channel, iface) {
           }
           
           if (src && src !== bssid && src !== '' && src !== 'ff:ff:ff:ff:ff:ff') {
-            stats.clients.add(src);
-            console.log(`Client detected: ${src}`);
-          }
-          if (dst && dst !== bssid && dst !== '' && dst !== 'ff:ff:ff:ff:ff:ff') {
-            stats.clients.add(dst);
-            console.log(`Client detected: ${dst}`);
+            // Проверяем что это клиент нашей целевой сети (src не является BSSID другой сети)
+            if (src.toLowerCase() === bssid.toLowerCase()) {
+              // Это пакет от нашего роутера, добавляем destination если это клиент
+              if (dst && dst !== '' && dst !== 'ff:ff:ff:ff:ff:ff' && dst.toLowerCase() !== bssid.toLowerCase()) {
+                stats.clients.add(dst);
+                console.log(`Client detected: ${dst}`);
+              }
+            } else {
+              // Это пакет от клиента, проверяем что он предназначен нашему роутеру
+              if (dst && dst.toLowerCase() === bssid.toLowerCase()) {
+                stats.clients.add(src);
+                console.log(`Client detected: ${src}`);
+              }
+            }
           }
         }
       });
