@@ -221,6 +221,8 @@ function startTshark(bssid, channel, iface) {
     "json",
   ]);
 
+  console.log(`tshark started with PID: ${tsharkProcess.pid}`);
+
   tsharkProcess.stdout.on("data", (data) => {
     try {
       const packets = JSON.parse(data.toString());
@@ -241,8 +243,12 @@ function startTshark(bssid, channel, iface) {
     console.error("tshark error:", d.toString());
   });
 
-  tsharkProcess.on("close", () => {
-    console.log("tshark stopped");
+  tsharkProcess.on("close", (code) => {
+    console.log(`tshark stopped with code: ${code}`);
+  });
+
+  tsharkProcess.on("error", (err) => {
+    console.error("tshark process error:", err);
   });
 }
 
