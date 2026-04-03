@@ -184,7 +184,22 @@ let stats = {
   totalPackets: 0,
   handshakeCount: 0,
   clients: new Set(),
+  lastSeen: new Map(), // Время последнего обнаружения для каждого клиента
 };
+
+// Очистка неактивных клиентов каждые 30 секунд
+setInterval(() => {
+  const now = Date.now();
+  const timeout = 60000; // 1 минута неактивности
+  
+  for (const [mac, lastSeen] of stats.lastSeen.entries()) {
+    if (now - lastSeen > timeout) {
+      stats.clients.delete(mac);
+      stats.lastSeen.delete(mac);
+      console.log(`Removed inactive client: ${mac}`);
+    }
+  }
+}, 30000);
 
 // ==========================
 // Utility functions
@@ -194,6 +209,7 @@ function resetStats() {
     totalPackets: 0,
     handshakeCount: 0,
     clients: new Set(),
+    lastSeen: new Map(),
   };
 }
 
@@ -293,6 +309,7 @@ function startTshark(bssid, channel, iface) {
                 // Только пакеты данных (0x20 = QoS Data, 0x08 = Data)
                 if (packetType === '0x20' || packetType === '0x08') {
                   stats.clients.add(src);
+                  stats.lastSeen.set(src, Date.now());
                   console.log(`Client detected: ${src} (to router, type: ${packetType})`);
                 }
               }
@@ -301,6 +318,7 @@ function startTshark(bssid, channel, iface) {
                 // Только пакеты данных
                 if (packetType === '0x20' || packetType === '0x08') {
                   stats.clients.add(dst);
+                  stats.lastSeen.set(dst, Date.now());
                   console.log(`Client detected: ${dst} (from router, type: ${packetType})`);
                 }
               }
