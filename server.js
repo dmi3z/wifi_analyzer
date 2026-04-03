@@ -222,7 +222,7 @@ function getDeviceName(mac) {
     return `${manufacturer} (${mac})`;
   }
   
-  return mac;
+  return `Client Device (${mac})`;
 }
 
 
