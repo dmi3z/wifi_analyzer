@@ -201,24 +201,24 @@ function stopTshark() {
   if (tsharkProcess) {
     console.log("Stopping old tshark...");
     const pid = tsharkProcess.pid;
-    tsharkProcess.kill('SIGTERM');
     
-    setTimeout(() => {
-      if (tsharkProcess) {
-        console.log("Force killing tshark...");
-        tsharkProcess.kill('SIGKILL');
+    // Используем sudo для убийства процесса
+    exec(`sudo kill -TERM ${pid}`, (error) => {
+      if (error) {
+        console.log("Failed to kill tshark gracefully:", error.message);
       }
       
-      // Проверяем что процесс умер
-      exec(`kill -0 ${pid} 2>/dev/null`, (error) => {
-        if (error) {
-          console.log(`tshark process ${pid} successfully killed`);
-        } else {
-          console.log(`tshark process ${pid} still running, force kill...`);
-          exec(`sudo kill -9 ${pid}`);
-        }
-      });
-    }, 1000);
+      // Force kill через 1 секунду
+      setTimeout(() => {
+        exec(`sudo kill -KILL ${pid}`, (killError) => {
+          if (killError) {
+            console.log("Force kill failed:", killError.message);
+          } else {
+            console.log(`tshark process ${pid} force killed`);
+          }
+        });
+      }, 1000);
+    });
     
     tsharkProcess = null;
     resetStats();
