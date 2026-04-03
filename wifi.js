@@ -200,8 +200,15 @@ function resetStats() {
 function stopTshark() {
   if (tsharkProcess) {
     console.log("Stopping old tshark...");
-    tsharkProcess.kill();
+    tsharkProcess.kill('SIGTERM');
+    setTimeout(() => {
+      if (tsharkProcess) {
+        tsharkProcess.kill('SIGKILL');
+      }
+    }, 1000);
     tsharkProcess = null;
+    resetStats();
+    console.log("tshark stopped and stats reset");
   }
 }
 

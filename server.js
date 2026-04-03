@@ -1287,8 +1287,19 @@ app.post("/target", (req, res) => {
   }
 });
 
+// Start Wi-Fi capture
+app.post("/wifi/start-capture", (req, res) => {
+  const { bssid, channel, iface } = req.body;
+  try {
+    const result = wifi.setTarget(bssid, channel, iface);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // SSE endpoint
-app.get("/wifi/start-capture", (req, res) => {
+app.get("/stream", (req, res) => {
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
