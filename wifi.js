@@ -272,17 +272,23 @@ function startTshark(bssid, channel, iface) {
             console.log(`Handshake detected! Total: ${stats.handshakeCount}`);
           }
           
+          // Безопасная проверка и фильтрация клиентов
           if (src && src !== bssid && src !== '' && src !== 'ff:ff:ff:ff:ff:ff') {
-            // Проверяем что это клиент нашей целевой сети (src не является BSSID другой сети)
-            if (src.toLowerCase() === bssid.toLowerCase()) {
+            const srcLower = src.toLowerCase();
+            const bssidLower = (bssid || '').toLowerCase();
+            
+            if (srcLower === bssidLower) {
               // Это пакет от нашего роутера, добавляем destination если это клиент
-              if (dst && dst !== '' && dst !== 'ff:ff:ff:ff:ff:ff' && dst.toLowerCase() !== bssid.toLowerCase()) {
-                stats.clients.add(dst);
-                console.log(`Client detected: ${dst}`);
+              if (dst && dst !== '' && dst !== 'ff:ff:ff:ff:ff:ff' && dst !== bssid) {
+                const dstLower = dst.toLowerCase();
+                if (dstLower !== bssidLower) {
+                  stats.clients.add(dst);
+                  console.log(`Client detected: ${dst}`);
+                }
               }
             } else {
               // Это пакет от клиента, проверяем что он предназначен нашему роутеру
-              if (dst && dst.toLowerCase() === bssid.toLowerCase()) {
+              if (dst && dst.toLowerCase() === bssidLower) {
                 stats.clients.add(src);
                 console.log(`Client detected: ${src}`);
               }
