@@ -213,36 +213,7 @@ function resetStats() {
   };
 }
 
-function stopTshark() {
-  console.log("Stopping all tshark processes...");
-  
-  // Убиваем все tshark процессы
-  exec("sudo killall tshark", (error, stdout, stderr) => {
-    if (error) {
-      console.log("No tshark processes to kill or killall failed:", error.message);
-    } else {
-      console.log("All tshark processes killed");
-    }
-  });
-  
-  // Также пробуем убить конкретный процесс если он есть
-  if (tsharkProcess) {
-    const pid = tsharkProcess.pid;
-    exec(`sudo kill -TERM ${pid}`, (error) => {
-      setTimeout(() => {
-        exec(`sudo kill -KILL ${pid}`, (killError) => {
-          console.log(`tshark process ${pid} kill attempt completed`);
-        });
-      }, 1000);
-    });
-    tsharkProcess = null;
-  }
-  
-  resetStats();
-  console.log("tshark stopped and stats reset");
-}
-
-function startAirodump(bssid, channel, iface) {
+function startTshark(bssid, channel, iface) {
   console.log(`Starting capture for ${bssid} on channel ${channel}`);
   execSync(`sudo iw dev ${iface} set channel ${channel}`);
   resetStats();
@@ -362,6 +333,35 @@ function startAirodump(bssid, channel, iface) {
   tsharkProcess.on("error", (err) => {
     console.error("tshark process error:", err);
   });
+}
+
+function stopTshark() {
+  console.log("Stopping all tshark processes...");
+  
+  // Убиваем все tshark процессы
+  exec("sudo killall tshark", (error, stdout, stderr) => {
+    if (error) {
+      console.log("No tshark processes to kill or killall failed:", error.message);
+    } else {
+      console.log("All tshark processes killed");
+    }
+  });
+  
+  // Также пробуем убить конкретный процесс если он есть
+  if (tsharkProcess) {
+    const pid = tsharkProcess.pid;
+    exec(`sudo kill -TERM ${pid}`, (error) => {
+      setTimeout(() => {
+        exec(`sudo kill -KILL ${pid}`, (killError) => {
+          console.log(`tshark process ${pid} kill attempt completed`);
+        });
+      }, 1000);
+    });
+    tsharkProcess = null;
+  }
+  
+  resetStats();
+  console.log("tshark stopped and stats reset");
 }
 
 // Вспомогательная функция для проверки MAC
