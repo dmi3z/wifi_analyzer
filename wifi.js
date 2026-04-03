@@ -259,7 +259,8 @@ function startTshark(bssid, channel, iface) {
         if (!src || !dst || !bssid || !packetTypeRaw) return;
 
         const bssidLower = bssid.toLowerCase();
-        if (bssidLower !== bssid.toLowerCase()) return;
+        // Убираем жесткую фильтрацию по BSSID - считаем все пакеты от/к целевой сети
+        if (bssidLower !== bssid.toLowerCase() && srcLower !== bssid.toLowerCase() && dstLower !== bssid.toLowerCase()) return;
 
         const srcLower = src.toLowerCase();
         const dstLower = dst.toLowerCase();
