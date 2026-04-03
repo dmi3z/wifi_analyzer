@@ -1277,18 +1277,10 @@ app.post("/mode/managed", (req, res) => {
 });
 
 // Set target BSSID and channel
-app.post("/target", (req, res) => {
-  const { bssid, channel, iface } = req.body;
-  try {
-    const result = wifi.setTarget(bssid, channel, iface);
-    res.json(result);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
+
 
 // Start Wi-Fi capture
-app.post("/wifi/start-capture", (req, res) => {
+app.post("/wifi/target", (req, res) => {
   const { bssid, channel, iface } = req.body;
   try {
     const result = wifi.setTarget(bssid, channel, iface);
@@ -1299,7 +1291,7 @@ app.post("/wifi/start-capture", (req, res) => {
 });
 
 // SSE endpoint
-app.get("/stream", (req, res) => {
+app.get("/wifi/stream", (req, res) => {
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
