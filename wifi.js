@@ -321,36 +321,37 @@ function startAirodump(bssid, channel, iface) {
             let clientCount = 0;
             
             lines.forEach((line, index) => {
-              if (line.includes('Station MAC')) {
-                inClientSection = true;
-                console.log(`Found client section at line ${index}`);
-                return;
-              }
-              if (line.trim() === '' && inClientSection) {
-                inClientSection = false;
-                console.log(`End of client section at line ${index}`);
-                return;
-              }
+            // Ищем начало секции клиентов
+            if (line.includes('Station MAC, First time seen')) {
+              inClientSection = true;
+              console.log(`Found client section at line ${index}`);
+              return;
+            }
+            // Пропускаем пустые строки и заголовок
+            if ((line.trim() === '' || line.includes('Station MAC')) && inClientSection) {
+              return;
+            }
+            
+            if (inClientSection && line.trim()) {
+              const fields = line.split(',').map(f => f.trim());
+              console.log(`Line ${index}: ${fields.length} fields:`, fields);
               
-              if (inClientSection && line.trim()) {
-                const fields = line.split(',').map(f => f.trim());
-                console.log(`Line ${index}: ${fields.length} fields:`, fields);
+              // Для клиентов нужно минимум 4 поля
+              if (fields.length >= 4) {
+                const [mac, firstSeen, lastSeen, packets] = fields;
                 
-                if (fields.length >= 6) {
-                  const [mac, , , , packets, ,] = fields;
+                if (mac && isValidMAC(mac)) {
+                  stats.clients.add(mac.toLowerCase());
+                  stats.lastSeen.set(mac.toLowerCase(), now);
+                  const packetCount = parseInt(packets) || 0;
+                  stats.totalPackets += packetCount;
                   
-                  if (mac && mac !== 'Station MAC' && isValidMAC(mac)) {
-                    stats.clients.add(mac.toLowerCase());
-                    stats.lastSeen.set(mac.toLowerCase(), now);
-                    const packetCount = parseInt(packets) || 0;
-                    stats.totalPackets += packetCount;
-                    
-                    console.log(`Client detected: ${mac} (${packetCount} packets)`);
-                    clientCount++;
-                  }
+                  console.log(`Client detected: ${mac} (${packetCount} packets)`);
+                  clientCount++;
                 }
               }
-            });
+            }
+          });
             
             console.log(`Processed ${clientCount} clients this interval`);
           } catch (e) {
