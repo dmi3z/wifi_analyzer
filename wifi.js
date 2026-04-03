@@ -240,7 +240,7 @@ function stopTshark() {
   
   // Очищаем временные файлы
   try {
-    execSync("sudo rm -f ./airodump-*.csv ./airodump-*.kismet.csv ./airodump-*.log.csv");
+    execSync("sudo rm -f /home/pi/airodump-*.csv /home/pi/airodump-*.kismet.csv /home/pi/airodump-*.log.csv");
     console.log("Cleaned up airodump-ng temp files");
   } catch (e) {
     console.log("No temp files to clean");
@@ -260,7 +260,7 @@ function startAirodump(bssid, channel, iface) {
 
   // Очищаем старые CSV файлы airodump-ng
   try {
-    execSync("sudo rm -f ./airodump-*.csv ./airodump-*.kismet.csv ./airodump-*.log.csv");
+    execSync("sudo rm -f /home/pi/airodump-*.csv /home/pi/airodump-*.kismet.csv /home/pi/airodump-*.log.csv");
     console.log("Cleaned up old airodump-ng files");
   } catch (e) {
     console.log("No old files to clean");
@@ -270,7 +270,7 @@ function startAirodump(bssid, channel, iface) {
     "airodump-ng",
     "--bssid", bssid,
     "--channel", channel.toString(),
-    "--write", "./airodump",
+    "--write", "/home/pi/airodump",
     "--output-format", "csv",
     iface,
   ];
@@ -307,7 +307,7 @@ function startAirodump(bssid, channel, iface) {
     const csvInterval = setInterval(() => {
       try {
         // Читаем файл клиентов
-        const clientsFile = './airodump-01.csv';
+        const clientsFile = '/home/pi/airodump-01.csv';
         if (fs.existsSync(clientsFile)) {
           const content = fs.readFileSync(clientsFile, 'utf8');
           const lines = content.split('\n');
