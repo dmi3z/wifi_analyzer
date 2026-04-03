@@ -234,7 +234,8 @@ function broadcastDeviceUpdate() {
     bluetooth.clients.forEach(client => {
       if (client && !client.destroyed && client.writable) {
         try {
-          client.write(`data: ${message}\n\n`);
+          // Правильный SSE формат
+          client.write(`event: device_update\ndata: ${message}\n\n`);
           if (client.flush) {
             client.flush();
           }
@@ -309,7 +310,8 @@ app.get("/events", (req, res) => {
         services: p.services || []
       }));
       
-      res.write(`data: ${JSON.stringify({ type: 'devices', data: devices })}\n\n`);
+      // Правильный SSE формат
+      res.write(`event: device_update\ndata: ${JSON.stringify({ type: 'devices', data: devices })}\n\n`);
       
       if (res.flush) {
         res.flush();
@@ -342,6 +344,9 @@ app.get("/events", (req, res) => {
     const pingInterval = setInterval(() => {
       if (!res.destroyed && res.writable) {
         try {
+          // Отправляем heartbeat чтобы избежать pending
+          res.write(`event: heartbeat\ndata: {"type":"ping","timestamp":${Date.now()}}\n\n`);
+          
           // Отправляем актуальные данные об устройствах
           const noble = require("@abandonware/noble");
           const devices = Object.values(noble._peripherals || {}).map(p => ({
@@ -352,7 +357,8 @@ app.get("/events", (req, res) => {
             services: p.services || []
           }));
           
-          res.write(`data: ${JSON.stringify({ type: 'devices_update', data: devices })}\n\n`);
+          // Правильный SSE формат с event типом
+          res.write(`event: device_update\ndata: ${JSON.stringify({ type: 'devices_update', data: devices })}\n\n`);
           
           if (res.flush) {
             res.flush();
