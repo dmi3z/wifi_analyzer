@@ -216,7 +216,7 @@ function startTshark(bssid, channel, iface) {
     "-i",
     iface,
     "-Y",
-    `wlan.bssid == ${bssid}`,
+    "wlan",
     "-T",
     "json",
   ]);
