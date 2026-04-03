@@ -267,8 +267,8 @@ function startTshark(bssid, channel, iface) {
         const packetType = packetTypeRaw.toLowerCase().replace('0x','');
 
         stats.totalPackets++;
-        if (stats.totalPackets <= 10) {
-          console.log(`Packet ${stats.totalPackets}: src=${src}, dst=${dst}, type=${packetType}, eapol=${eapol}`);
+        if (stats.totalPackets <= 20 || stats.totalPackets % 100 === 0) {
+          console.log(`Packet ${stats.totalPackets}: src=${src}, dst=${dst}, bssid=${bssid}, type=${packetType}, eapol=${eapol}`);
         }
 
         // -------------------------------
