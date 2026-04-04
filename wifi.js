@@ -191,7 +191,7 @@ let stats = {
 setInterval(() => {
   const now = Date.now();
   const timeout = 10000; // 10 секунд неактивности
-  
+
   for (const [mac, lastSeen] of stats.lastSeen.entries()) {
     if (now - lastSeen > timeout) {
       stats.clients.delete(mac);
@@ -246,13 +246,13 @@ function startTshark(bssid, channel, iface) {
 
   tsharkProcess.stdout.on("data", (data) => {
     try {
-      const lines = data.toString().trim().split('\n');
+      const lines = data.toString().trim().split("\n");
       const now = Date.now();
 
-      lines.forEach(line => {
+      lines.forEach((line) => {
         if (!line.trim()) return;
 
-        const [src, dst, bssid, packetTypeRaw, eapol] = line.split('\t');
+        const [src, dst, bssid, packetTypeRaw, eapol] = line.split("\t");
         if (!src || !dst || !bssid) return;
 
         // Проверяем что все поля определены
@@ -264,19 +264,21 @@ function startTshark(bssid, channel, iface) {
 
         const srcLower = src.toLowerCase();
         const dstLower = dst.toLowerCase();
-        const packetType = packetTypeRaw.toLowerCase().replace('0x','');
+        const packetType = packetTypeRaw.toLowerCase().replace("0x", "");
 
         stats.totalPackets++;
         if (stats.totalPackets <= 20 || stats.totalPackets % 100 === 0) {
-          console.log(`Packet ${stats.totalPackets}: src=${src}, dst=${dst}, bssid=${bssid}, type=${packetType}, eapol=${eapol}`);
+          console.log(
+            `Packet ${stats.totalPackets}: src=${src}, dst=${dst}, bssid=${bssid}, type=${packetType}, eapol=${eapol}`,
+          );
         }
 
         // -------------------------------
         // 1️⃣ Добавляем handshake / EAPOL как клиента
         // -------------------------------
-        if (eapol && eapol !== '') {
+        if (eapol && eapol !== "") {
           stats.handshakeCount++;
-          [srcLower, dstLower].forEach(mac => {
+          [srcLower, dstLower].forEach((mac) => {
             if (mac !== bssidLower && isValidMAC(mac)) {
               stats.clients.add(mac);
               stats.lastSeen.set(mac, now);
@@ -294,11 +296,18 @@ function startTshark(bssid, channel, iface) {
         // 3️⃣ Клиент → AP (строгая фильтрация)
         // -------------------------------
         if (srcLower !== bssidLower && dstLower === bssidLower) {
-          if (['20','08'].includes(packetType)) { // Только Data и QoS Data
-            if (isValidMAC(srcLower) && !srcLower.startsWith('02:') && !srcLower.startsWith('00:')) {
+          if (["20", "08"].includes(packetType)) {
+            // Только Data и QoS Data
+            if (
+              isValidMAC(srcLower) &&
+              !srcLower.startsWith("02:") &&
+              !srcLower.startsWith("00:")
+            ) {
               stats.clients.add(srcLower);
               stats.lastSeen.set(srcLower, now);
-              console.log(`Client detected: ${srcLower} (to AP, type: ${packetType})`);
+              console.log(
+                `Client detected: ${srcLower} (to AP, type: ${packetType})`,
+              );
             }
           }
         }
@@ -306,11 +315,18 @@ function startTshark(bssid, channel, iface) {
         // 4️⃣ AP → Клиент (строгая фильтрация)
         // -------------------------------
         else if (srcLower === bssidLower && dstLower !== bssidLower) {
-          if (['20','08'].includes(packetType)) { // Только Data и QoS Data
-            if (isValidMAC(dstLower) && !dstLower.startsWith('02:') && !dstLower.startsWith('00:')) {
+          if (["20", "08"].includes(packetType)) {
+            // Только Data и QoS Data
+            if (
+              isValidMAC(dstLower) &&
+              !dstLower.startsWith("02:") &&
+              !dstLower.startsWith("00:")
+            ) {
               stats.clients.add(dstLower);
               stats.lastSeen.set(dstLower, now);
-              console.log(`Client detected: ${dstLower} (from AP, type: ${packetType})`);
+              console.log(
+                `Client detected: ${dstLower} (from AP, type: ${packetType})`,
+              );
             }
           }
         }
@@ -326,7 +342,7 @@ function startTshark(bssid, channel, iface) {
         }
       });
     } catch (e) {
-      console.error('Parse error:', e.message);
+      console.error("Parse error:", e.message);
     }
   });
 
@@ -345,16 +361,19 @@ function startTshark(bssid, channel, iface) {
 
 function stopTshark() {
   console.log("Stopping all tshark processes...");
-  
+
   // Убиваем все tshark процессы
   exec("sudo killall tshark", (error, stdout, stderr) => {
     if (error) {
-      console.log("No tshark processes to kill or killall failed:", error.message);
+      console.log(
+        "No tshark processes to kill or killall failed:",
+        error.message,
+      );
     } else {
       console.log("All tshark processes killed");
     }
   });
-  
+
   // Также пробуем убить конкретный процесс если он есть
   if (tsharkProcess) {
     const pid = tsharkProcess.pid;
@@ -367,7 +386,7 @@ function stopTshark() {
     });
     tsharkProcess = null;
   }
-  
+
   resetStats();
   console.log("tshark stopped and stats reset");
 }
@@ -376,8 +395,8 @@ function stopTshark() {
 function isValidMAC(mac) {
   if (!mac) return false;
   mac = mac.toLowerCase();
-  if (mac === 'ff:ff:ff:ff:ff:ff') return false;
-  if (mac.startsWith('33:33') || mac.startsWith('01:00:5e')) return false;
+  if (mac === "ff:ff:ff:ff:ff:ff") return false;
+  if (mac.startsWith("33:33") || mac.startsWith("01:00:5e")) return false;
   return true;
 }
 
@@ -481,28 +500,111 @@ function setTarget(bssid, channel, iface) {
 }
 
 // Wi-Fi scan endpoint
-async function scanWifi() {
-  return new Promise((resolve, reject) => {
-    exec("sudo iw dev wlan1 scan", async (err, stdout) => {
-      if (err) return reject(new Error(err.message));
+// async function scanWifi() {
+//   return new Promise((resolve, reject) => {
+//     exec("sudo iw dev wlan1 scan", async (err, stdout) => {
+//       if (err) return reject(new Error(err.message));
 
-      const networkBlocks = stdout
+//       const networkBlocks = stdout
+//         .split(/\nBSS /)
+//         .map((b, i) => (i === 0 ? b : "BSS " + b));
+//       const allChannels = networkBlocks.map((b) => ({
+//         channel: parseInt((b.match(/channel (\d+)/) || [])[1]),
+//       }));
+
+//       const results = [];
+//       for (const block of networkBlocks) {
+//         const info = await parseNetworkBlock(block, allChannels);
+//         results.push(info);
+//       }
+
+//       resolve(results);
+//     });
+//   });
+// }
+
+function parseScanBlock(block) {
+  const ssidMatch = block.match(/SSID: (.+)/);
+  const bssidMatch = block.match(/^BSS ([0-9a-f:]+)/m);
+  const channelMatch = block.match(/channel (\d+)/);
+  const signalMatch = block.match(/signal: ([\-\d]+) dBm/);
+
+  if (!ssidMatch || !bssidMatch || !channelMatch || !signalMatch) return null;
+
+  return {
+    ssid: ssidMatch[1].trim(),
+    bssid: bssidMatch[1].toLowerCase(),
+    channel: parseInt(channelMatch[1]),
+    signal_dbm: parseInt(signalMatch[1]),
+  };
+}
+
+// Один скан
+function scanOnce() {
+  return new Promise((resolve, reject) => {
+    exec("sudo iw dev wlan1 scan", (err, stdout) => {
+      if (err) return reject(err);
+
+      const blocks = stdout
         .split(/\nBSS /)
         .map((b, i) => (i === 0 ? b : "BSS " + b));
-      const allChannels = networkBlocks.map((b) => ({
-        channel: parseInt((b.match(/channel (\d+)/) || [])[1]),
-      }));
-
       const results = [];
-      for (const block of networkBlocks) {
-        const info = await parseNetworkBlock(block, allChannels);
-        results.push(info);
+
+      for (const block of blocks) {
+        const parsed = parseScanBlock(block);
+        if (parsed) results.push(parsed);
       }
 
       resolve(results);
     });
   });
 }
+
+// Несколько сканов и усреднение
+async function scanWifiStable(scansCount = 3) {
+  const bssidMap = {};
+
+  for (let i = 0; i < scansCount; i++) {
+    const scanResults = await scanOnce();
+
+    for (const r of scanResults) {
+      if (!bssidMap[r.bssid]) {
+        bssidMap[r.bssid] = { ssid: r.ssid, channels: [], signals: [] };
+      }
+      bssidMap[r.bssid].channels.push(r.channel);
+      bssidMap[r.bssid].signals.push(r.signal_dbm);
+    }
+
+    await new Promise((res) => setTimeout(res, 2000)); // пауза между сканами
+  }
+
+  // Усреднение данных
+  return Object.entries(bssidMap).map(([bssid, data]) => {
+    const avgChannel = Math.round(
+      data.channels.reduce((a, b) => a + b, 0) / data.channels.length,
+    );
+    const avgSignal = Math.round(
+      data.signals.reduce((a, b) => a + b, 0) / data.signals.length,
+    );
+    return {
+      ssid: data.ssid,
+      bssid,
+      channel: avgChannel,
+      signal_dbm: avgSignal,
+    };
+  });
+}
+
+// Эндпоинт для фронта
+app.get("/wifi", async (req, res) => {
+  try {
+    const results = await scanWifiStable(3); // 3 скана по умолчанию
+    res.json({ networks: results });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to scan Wi-Fi networks" });
+  }
+});
 
 // Export functions and data
 module.exports = {
@@ -513,7 +615,7 @@ module.exports = {
   parseSecurity,
   computeOverall,
   parseNetworkBlock,
-  
+
   // WiFi management
   switchToMonitorMode,
   switchToManagedMode,
@@ -521,19 +623,19 @@ module.exports = {
   getWlanInterfaces,
   setTarget,
   scanWifi,
-  
+
   // Stats and monitoring
   resetStats,
   stopTshark,
   startTshark,
   ensureMonitorMode,
-  
+
   // Global data
   currentTarget,
   stats,
   tsharkProcess,
-  
+
   // Accessors for global data
   getCurrentTarget: () => currentTarget,
-  getStats: () => stats
+  getStats: () => stats,
 };
