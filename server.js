@@ -1472,6 +1472,84 @@ app.get("/wifi", async (req, res) => {
 });
 
 // ==========================
+// Get IP address for wlan0 interface
+// ==========================
+app.get("/wifi/connection/getIP", (req, res) => {
+  try {
+    exec("ifconfig wlan0", (error, stdout, stderr) => {
+      if (error) {
+        console.error(`[${now()}] Error executing ifconfig:`, error.message);
+        return res.status(500).json({
+          error: "Failed to get network interface information",
+          message: error.message,
+        });
+      }
+
+      if (stderr) {
+        console.error(`[${now()}] ifconfig stderr:`, stderr);
+      }
+
+      // Parse the ifconfig output to extract IP address
+      const lines = stdout.split('\n');
+      let ipAddress = null;
+      let interfaceFound = false;
+
+      for (const line of lines) {
+        // Check if we're on the wlan0 interface line
+        if (line.includes('wlan0')) {
+          interfaceFound = true;
+          continue;
+        }
+
+        // If we found wlan0 and the line contains "inet", extract the IP
+        if (interfaceFound && line.includes('inet')) {
+          // Match pattern: "inet addr:192.168.1.100" or "inet 192.168.1.100"
+          const ipMatch = line.match(/inet\s+(?:addr:)?(\d+\.\d+\.\d+\.\d+)/);
+          if (ipMatch) {
+            ipAddress = ipMatch[1];
+            break;
+          }
+        }
+
+        // If we encounter a blank line after wlan0, we've moved to the next interface
+        if (interfaceFound && line.trim() === '') {
+          break;
+        }
+      }
+
+      if (!interfaceFound) {
+        return res.status(404).json({
+          error: "Interface not found",
+          message: "wlan0 interface not found",
+        });
+      }
+
+      if (!ipAddress) {
+        return res.status(404).json({
+          error: "IP address not found",
+          message: "No IP address configured for wlan0",
+        });
+      }
+
+      console.log(`[${now()}] Found IP address for wlan0: ${ipAddress}`);
+      
+      res.json({
+        interface: "wlan0",
+        ip: ipAddress,
+        status: "success",
+        message: `IP address ${ipAddress} found for wlan0`,
+      });
+    });
+  } catch (error) {
+    console.error(`[${now()}] Unexpected error in getIp endpoint:`, error.message);
+    res.status(500).json({
+      error: "Internal server error",
+      message: error.message,
+    });
+  }
+});
+
+// ==========================
 // Start server
 // ==========================
 app.listen(PORT, "0.0.0.0", () => {
