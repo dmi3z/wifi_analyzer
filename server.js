@@ -1558,7 +1558,7 @@ app.get("/wifi/connection/devices/:ip", (req, res) => {
   try {
     console.log(`[${now()}] Starting nmap scan for network: ${targetIp}`);
     
-    exec(`nmap -sn ${targetIp}`, (error, stdout, stderr) => {
+    exec(`nmap -sn ${targetIp}/24`, (error, stdout, stderr) => {
       if (error) {
         console.error(`[${now()}] Error executing nmap:`, error.message);
         return res.status(500).json({
