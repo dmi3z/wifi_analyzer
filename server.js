@@ -1624,7 +1624,7 @@ app.get("/wifi/connection/devices/:ip", (req, res) => {
 
       console.log(`[${now()}] Found ${devices.length} devices in network scan`);
       
-      res.json({
+      return res.json({
         devices: devices,
         total: devices.length,
         target: targetIp,
@@ -1634,7 +1634,7 @@ app.get("/wifi/connection/devices/:ip", (req, res) => {
     });
   } catch (error) {
     console.error(`[${now()}] Unexpected error in devices endpoint:`, error.message);
-    res.status(500).json({
+    return res.status(500).json({
       error: "Internal server error",
       message: error.message,
     });
