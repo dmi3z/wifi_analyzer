@@ -1550,6 +1550,81 @@ app.get("/wifi/connection/getIP", (req, res) => {
 });
 
 // ==========================
+// Scan network devices using nmap
+// ==========================
+app.get("/wifi/connection/devices/:ip", (req, res) => {
+  const targetIp = req.params.ip;
+  
+  try {
+    console.log(`[${now()}] Starting nmap scan for network: ${targetIp}`);
+    
+    exec(`nmap -sn ${targetIp}`, (error, stdout, stderr) => {
+      if (error) {
+        console.error(`[${now()}] Error executing nmap:`, error.message);
+        return res.status(500).json({
+          error: "Failed to scan network",
+          message: error.message,
+        });
+      }
+
+      if (stderr) {
+        console.error(`[${now()}] nmap stderr:`, stderr);
+      }
+
+      // Parse nmap output to extract devices
+      const lines = stdout.split('\n');
+      const devices = [];
+      
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        
+        // Look for "Nmap scan report for" lines
+        if (line.startsWith('Nmap scan report for')) {
+          // Extract name and IP from the line
+          // Format: "Nmap scan report for Name (ip)" or "Nmap scan report for ip"
+          const match = line.match(/Nmap scan report for\s+(?:\()?([^\s)]+)(?:\s*\(([^)]+)\))?/);
+          
+          if (match) {
+            let name = match[1];
+            let ip = match[2];
+            
+            // If IP is not in parentheses, it might be the name itself (if it's an IP)
+            if (!ip && name.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+              ip = name;
+              name = 'Unknown';
+            }
+            
+            // Only add if we have a valid IP
+            if (ip && ip.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+              devices.push({
+                name: name,
+                ip: ip
+              });
+            }
+          }
+        }
+      }
+
+      console.log(`[${now()}] Found ${devices.length} devices in network scan`);
+      
+      res.json({
+        devices: devices,
+        total: devices.length,
+        target: targetIp,
+        status: "success",
+        message: `Found ${devices.length} devices in network ${targetIp}`,
+      });
+    });
+  } catch (error) {
+    console.error(`[${now()}] Unexpected error in devices endpoint:`, error.message);
+    res.status(500).json({
+      error: "Internal server error",
+      message: error.message,
+    });
+  }
+});
+
+// ==========================
 // Start server
 // ==========================
 app.listen(PORT, "0.0.0.0", () => {
