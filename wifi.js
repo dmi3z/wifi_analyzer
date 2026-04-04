@@ -500,28 +500,28 @@ function setTarget(bssid, channel, iface) {
 }
 
 // Wi-Fi scan endpoint
-// async function scanWifi() {
-//   return new Promise((resolve, reject) => {
-//     exec("sudo iw dev wlan1 scan", async (err, stdout) => {
-//       if (err) return reject(new Error(err.message));
+async function scanWifi() {
+  return new Promise((resolve, reject) => {
+    exec("sudo iw dev wlan1 scan", async (err, stdout) => {
+      if (err) return reject(new Error(err.message));
 
-//       const networkBlocks = stdout
-//         .split(/\nBSS /)
-//         .map((b, i) => (i === 0 ? b : "BSS " + b));
-//       const allChannels = networkBlocks.map((b) => ({
-//         channel: parseInt((b.match(/channel (\d+)/) || [])[1]),
-//       }));
+      const networkBlocks = stdout
+        .split(/\nBSS /)
+        .map((b, i) => (i === 0 ? b : "BSS " + b));
+      const allChannels = networkBlocks.map((b) => ({
+        channel: parseInt((b.match(/channel (\d+)/) || [])[1]),
+      }));
 
-//       const results = [];
-//       for (const block of networkBlocks) {
-//         const info = await parseNetworkBlock(block, allChannels);
-//         results.push(info);
-//       }
+      const results = [];
+      for (const block of networkBlocks) {
+        const info = await parseNetworkBlock(block, allChannels);
+        results.push(info);
+      }
 
-//       resolve(results);
-//     });
-//   });
-// }
+      resolve(results);
+    });
+  });
+}
 
 // Export functions and data
 module.exports = {
@@ -539,7 +539,7 @@ module.exports = {
   getWlanConnection,
   getWlanInterfaces,
   setTarget,
-  // scanWifi,
+  scanWifi,
 
   // Stats and monitoring
   resetStats,
