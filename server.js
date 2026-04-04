@@ -1418,7 +1418,7 @@ app.get("/wifi/stream", (req, res) => {
     const clientsArray = Array.from(stats.clients);
 
     // Ограничиваем количество клиентов для отображения
-    const maxClients = 10;
+    const maxClients = 100;
     const limitedClients = clientsArray.slice(0, maxClients);
 
     const clientsWithNames = limitedClients.map((mac) => getDeviceName(mac));
@@ -1431,7 +1431,7 @@ app.get("/wifi/stream", (req, res) => {
         target: wifi.getCurrentTarget(),
       })}\n\n`,
     );
-  }, 1000);
+  }, 500);
 
   req.on("close", () => {
     clearInterval(interval);
