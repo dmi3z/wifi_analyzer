@@ -1538,7 +1538,7 @@ async function scanWifiStable(scansCount = 3) {
 app.get("/wifi", async (req, res) => {
   try {
     const results = await scanWifiStable(3); // 3 скана по умолчанию
-    res.json({ networks: results });
+    res.json(results);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to scan Wi-Fi networks" });
