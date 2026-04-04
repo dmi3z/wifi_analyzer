@@ -1575,31 +1575,48 @@ app.get("/wifi/connection/devices/:ip", (req, res) => {
       const lines = stdout.split('\n');
       const devices = [];
       
+      console.log(`[${now()}] Raw nmap output for debugging:`);
+      console.log(stdout);
+      
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
         
         // Look for "Nmap scan report for" lines
         if (line.startsWith('Nmap scan report for')) {
+          console.log(`[${now()}] Found scan report line: ${line}`);
+          
           // Extract name and IP from the line
           // Format: "Nmap scan report for Name (ip)" or "Nmap scan report for ip"
-          const match = line.match(/Nmap scan report for\s+(?:\()?([^\s)]+)(?:\s*\(([^)]+)\))?/);
+          const match = line.match(/Nmap scan report for\s+(.+?)\s*\(([^)]+)\)/);
           
           if (match) {
-            let name = match[1];
-            let ip = match[2];
+            // Format with name and IP in parentheses
+            const name = match[1].trim();
+            const ip = match[2].trim();
             
-            // If IP is not in parentheses, it might be the name itself (if it's an IP)
-            if (!ip && name.match(/^\d+\.\d+\.\d+\.\d+$/)) {
-              ip = name;
-              name = 'Unknown';
-            }
+            console.log(`[${now()}] Parsed device: name="${name}", ip="${ip}"`);
             
             // Only add if we have a valid IP
-            if (ip && ip.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+            if (ip.match(/^\d+\.\d+\.\d+\.\d+$/)) {
               devices.push({
                 name: name,
                 ip: ip
               });
+            }
+          } else {
+            // Try format without parentheses (just IP)
+            const ipMatch = line.match(/Nmap scan report for\s+(\d+\.\d+\.\d+\.\d+)/);
+            
+            if (ipMatch) {
+              const ip = ipMatch[1].trim();
+              console.log(`[${now()}] Parsed IP-only device: ip="${ip}"`);
+              
+              devices.push({
+                name: 'Unknown',
+                ip: ip
+              });
+            } else {
+              console.log(`[${now()}] Could not parse line: ${line}`);
             }
           }
         }
