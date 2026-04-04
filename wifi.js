@@ -539,7 +539,7 @@ module.exports = {
   getWlanConnection,
   getWlanInterfaces,
   setTarget,
-  scanWifi,
+  // scanWifi,
 
   // Stats and monitoring
   resetStats,
