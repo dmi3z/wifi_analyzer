@@ -28,7 +28,7 @@ function parseSecurity(text) {
   const hasTKIP = /TKIP/.test(text);
   const hasCCMP = /CCMP/.test(text);
   const wpsRegex = /IE: .*Vendor Specific.*WFA.*WPS/i;
-  const wps = wpsRegex.test(line);
+  const wps = wpsRegex.test(text);
 
   let auth = [];
   let pairwise = [];
