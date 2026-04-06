@@ -1638,7 +1638,7 @@ app.get("/wifi/connection/devices/:ip", (req, res) => {
   }
 });
 
-app.post("/deauth/:bssid/:station?", (req, res) => {
+app.post("/deauth/:bssid", (req, res) => {
   const { bssid, station } = req.params;
 
   let cmd = `sudo aireplay-ng -0 10 -a ${bssid} wlan2`;
