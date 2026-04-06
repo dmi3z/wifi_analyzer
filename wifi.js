@@ -58,6 +58,14 @@ function parseSecurity(text) {
     }
   }
 
+  if (
+    auth.includes("WPA2-PSK") &&
+    !text.includes("SAE") &&
+    !text.includes("WPA3")
+  ) {
+    issues.push("Deauth vulnerable");
+  }
+
   // Проверка открытой сети
   const isOpen = /capability:.*Privacy/.test(text) === false;
   if (isOpen) {
