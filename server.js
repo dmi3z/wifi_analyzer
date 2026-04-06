@@ -1490,19 +1490,19 @@ app.get("/wifi/connection/getIP", (req, res) => {
       }
 
       // Parse the ifconfig output to extract IP address
-      const lines = stdout.split('\n');
+      const lines = stdout.split("\n");
       let ipAddress = null;
       let interfaceFound = false;
 
       for (const line of lines) {
         // Check if we're on the wlan0 interface line
-        if (line.includes('wlan0')) {
+        if (line.includes("wlan0")) {
           interfaceFound = true;
           continue;
         }
 
         // If we found wlan0 and the line contains "inet", extract the IP
-        if (interfaceFound && line.includes('inet')) {
+        if (interfaceFound && line.includes("inet")) {
           // Match pattern: "inet addr:192.168.1.100" or "inet 192.168.1.100"
           const ipMatch = line.match(/inet\s+(?:addr:)?(\d+\.\d+\.\d+\.\d+)/);
           if (ipMatch) {
@@ -1512,7 +1512,7 @@ app.get("/wifi/connection/getIP", (req, res) => {
         }
 
         // If we encounter a blank line after wlan0, we've moved to the next interface
-        if (interfaceFound && line.trim() === '') {
+        if (interfaceFound && line.trim() === "") {
           break;
         }
       }
@@ -1532,7 +1532,7 @@ app.get("/wifi/connection/getIP", (req, res) => {
       }
 
       console.log(`[${now()}] Found IP address for wlan0: ${ipAddress}`);
-      
+
       res.json({
         interface: "wlan0",
         ip: ipAddress,
@@ -1541,7 +1541,10 @@ app.get("/wifi/connection/getIP", (req, res) => {
       });
     });
   } catch (error) {
-    console.error(`[${now()}] Unexpected error in getIp endpoint:`, error.message);
+    console.error(
+      `[${now()}] Unexpected error in getIp endpoint:`,
+      error.message,
+    );
     res.status(500).json({
       error: "Internal server error",
       message: error.message,
@@ -1554,10 +1557,10 @@ app.get("/wifi/connection/getIP", (req, res) => {
 // ==========================
 app.get("/wifi/connection/devices/:ip", (req, res) => {
   const targetIp = req.params.ip;
-  
+
   try {
     console.log(`[${now()}] Starting nmap scan for network: ${targetIp}`);
-    
+
     exec(`nmap -sn ${targetIp}/24`, (error, stdout, stderr) => {
       if (error) {
         console.error(`[${now()}] Error executing nmap:`, error.message);
@@ -1572,58 +1575,49 @@ app.get("/wifi/connection/devices/:ip", (req, res) => {
       }
 
       // Parse nmap output to extract devices
-      const lines = stdout.split('\n');
+      const lines = stdout.split("\n");
       const devices = [];
-      
-      console.log(`[${now()}] Raw nmap output for debugging:`);
-      console.log(stdout);
-      
+
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
-        
+
         // Look for "Nmap scan report for" lines
-        if (line.startsWith('Nmap scan report for')) {
-          console.log(`[${now()}] Found scan report line: ${line}`);
-          
-          // Extract name and IP from the line
-          // Format: "Nmap scan report for Name (ip)" or "Nmap scan report for ip"
-          const match = line.match(/Nmap scan report for\s+(.+?)\s*\(([^)]+)\)/);
-          
+        if (line.startsWith("Nmap scan report for")) {
+          const match = line.match(
+            /Nmap scan report for\s+(.+?)\s*\(([^)]+)\)/,
+          );
+
           if (match) {
-            // Format with name and IP in parentheses
             const name = match[1].trim();
             const ip = match[2].trim();
-            
-            console.log(`[${now()}] Parsed device: name="${name}", ip="${ip}"`);
-            
+
             // Only add if we have a valid IP
             if (ip.match(/^\d+\.\d+\.\d+\.\d+$/)) {
               devices.push({
                 name: name,
-                ip: ip
+                ip: ip,
               });
             }
           } else {
             // Try format without parentheses (just IP)
-            const ipMatch = line.match(/Nmap scan report for\s+(\d+\.\d+\.\d+\.\d+)/);
-            
+            const ipMatch = line.match(
+              /Nmap scan report for\s+(\d+\.\d+\.\d+\.\d+)/,
+            );
+
             if (ipMatch) {
               const ip = ipMatch[1].trim();
-              console.log(`[${now()}] Parsed IP-only device: ip="${ip}"`);
-              
+
               devices.push({
-                name: 'Unknown',
-                ip: ip
+                name: "Unknown",
+                ip: ip,
               });
-            } else {
-              console.log(`[${now()}] Could not parse line: ${line}`);
             }
           }
         }
       }
 
       console.log(`[${now()}] Found ${devices.length} devices in network scan`);
-      
+
       return res.json({
         devices: devices,
         total: devices.length,
@@ -1633,12 +1627,36 @@ app.get("/wifi/connection/devices/:ip", (req, res) => {
       });
     });
   } catch (error) {
-    console.error(`[${now()}] Unexpected error in devices endpoint:`, error.message);
+    console.error(
+      `[${now()}] Unexpected error in devices endpoint:`,
+      error.message,
+    );
     return res.status(500).json({
       error: "Internal server error",
       message: error.message,
     });
   }
+});
+
+app.post("/deauth/:bssid/:station?", (req, res) => {
+  const { bssid, station } = req.params;
+
+  let cmd = `sudo aireplay-ng -0 10 -a ${bssid} wlan2`;
+  if (station && station !== "null") {
+    cmd += ` -c ${station}`;
+  }
+
+  exec(cmd, (error, stdout, stderr) => {
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+    res.json({
+      bssid,
+      station: station || "all",
+      result: stdout || stderr,
+      status: "Deauth sent",
+    });
+  });
 });
 
 // ==========================
