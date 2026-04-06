@@ -27,7 +27,8 @@ function parseSecurity(text) {
   const hasWPA3 = /RSN:.*Suite: SAE/.test(text) || /WPA3/.test(text); // примерный поиск WPA3
   const hasTKIP = /TKIP/.test(text);
   const hasCCMP = /CCMP/.test(text);
-  const wps = /WPS:/.test(text);
+  const wpsRegex = /IE: .*Vendor Specific.*WFA.*WPS/i;
+  const wps = wpsRegex.test(line);
 
   let auth = [];
   let pairwise = [];
@@ -92,7 +93,7 @@ function parseSecurity(text) {
     auth,
     pairwise_ciphers: pairwise,
     group_cipher: group_cipher || pairwise[0] || null,
-    wps: !!wps,
+    wps,
     security_level: score >= 7 ? "good" : score >= 5 ? "medium" : "weak",
     score,
     issues,
