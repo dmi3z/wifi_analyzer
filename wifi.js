@@ -24,7 +24,7 @@ function getOverlappingChannels(channel) {
 function parseSecurity(text) {
   const hasWPA = /WPA:\s+\* Version: 1/.test(text);
   const hasRSN = /RSN:/.test(text);
-  const hasWPA3 = /RSN:.*Suite: SAE/.test(text) || /WPA3/.test(text); // примерный поиск WPA3
+  const hasWPA3 = /RSN:.*Suite: SAE/.test(text) || /WPA3/.test(text);
   const hasTKIP = /TKIP/.test(text);
   const hasCCMP = /CCMP/.test(text);
   const wpsRegex = /IE: .*Vendor Specific.*WFA.*WPS/i;
@@ -34,19 +34,21 @@ function parseSecurity(text) {
   let pairwise = [];
   let group_cipher = null;
   let issues = [];
-  let score = 10;
+
+  let score = 10; // максимальный
 
   if (hasWPA3) {
     auth.push("WPA3-SAE");
     pairwise.push("CCMP");
   }
+
   if (hasRSN && !hasWPA3) {
     auth.push("WPA2-PSK");
     if (hasCCMP) pairwise.push("CCMP");
     if (hasTKIP) pairwise.push("TKIP");
-    if (hasTKIP) group_cipher = "TKIP";
-    else group_cipher = "CCMP";
+    group_cipher = hasTKIP ? "TKIP" : "CCMP";
   }
+
   if (hasWPA) {
     auth.push("WPA-PSK");
     if (hasCCMP) pairwise.push("CCMP");
@@ -55,27 +57,25 @@ function parseSecurity(text) {
     score -= 3;
     if (hasTKIP) {
       issues.push("TKIP cipher in use");
-      score -= 3;
+      score -= 2;
     }
   }
 
-  if (
-    auth.includes("WPA2-PSK") &&
-    !text.includes("SAE") &&
-    !text.includes("WPA3")
-  ) {
+  // Уязвимость к деаутентификации (если WPA2 без SAE)
+  if (auth.includes("WPA2-PSK") && !hasWPA3) {
     issues.push("Deauth vulnerable");
+    score -= 1;
   }
 
-  // Проверка открытой сети
+  // Открытая сеть
   const isOpen = /capability:.*Privacy/.test(text) === false;
   if (isOpen) {
     auth.push("OPEN");
-    score = Math.min(score, 2); // сильно снижает безопасность
+    score = Math.min(score, 2); // минимум безопасности
     issues.push("Open network");
   }
 
-  // Проверка WEP (устаревший)
+  // WEP
   const isWEP = /WEP/.test(text);
   if (isWEP) {
     auth.push("WEP");
@@ -83,11 +83,14 @@ function parseSecurity(text) {
     issues.push("WEP (insecure)");
   }
 
-  // Проверка WPS
+  // WPS
   if (wps) {
     issues.push("WPS enabled");
-    score -= 2;
+    score = Math.max(score - 2, 1); // никогда не уходит ниже 1
   }
+
+  // Ограничиваем score от 1 до 10
+  score = Math.max(Math.min(score, 10), 1);
 
   return {
     auth,
