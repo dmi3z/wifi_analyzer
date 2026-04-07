@@ -1450,6 +1450,20 @@ app.post("/wifi/stop-capture", (req, res) => {
   }
 });
 
+// Save captured handshakes
+app.post("/wifi/save-handshakes", (req, res) => {
+  try {
+    const result = wifi.saveHandshakes();
+    if (result.success) {
+      res.json(result);
+    } else {
+      res.status(400).json(result);
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Get list of Wi-Fi interfaces
 app.get("/wlan", (req, res) => {
   try {

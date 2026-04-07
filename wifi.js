@@ -199,6 +199,8 @@ let stats = {
   lastSeen: new Map(), // Время последнего обнаружения для каждого клиента
 };
 
+let capturedHandshakes = []; // Store captured handshake data with timestamps and packet info
+
 // Очистка неактивных клиентов каждые 30 секунд
 setInterval(() => {
   const now = Date.now();
@@ -223,6 +225,7 @@ function resetStats() {
     clients: new Set(),
     lastSeen: new Map(),
   };
+  capturedHandshakes = [];
 }
 
 function startTshark(bssid, channel, iface) {
@@ -286,10 +289,22 @@ function startTshark(bssid, channel, iface) {
         }
 
         // -------------------------------
-        // 1️⃣ Добавляем handshake / EAPOL как клиента
+        // 1° Add handshake / EAPOL as client
         // -------------------------------
         if (eapol && eapol !== "") {
           stats.handshakeCount++;
+          // Store handshake data
+          const handshakeData = {
+            timestamp: new Date().toISOString(),
+            src: src,
+            dst: dst,
+            bssid: bssid,
+            eapol: eapol,
+            packetType: packetType,
+            channel: currentTarget ? currentTarget.channel : null,
+            iface: currentTarget ? currentTarget.iface : null
+          };
+          capturedHandshakes.push(handshakeData);
           [srcLower, dstLower].forEach((mac) => {
             if (mac !== bssidLower && isValidMAC(mac)) {
               stats.clients.add(mac);
@@ -490,6 +505,52 @@ function getWlanInterfaces() {
   }
 }
 
+// Save captured handshakes to file
+function saveHandshakes() {
+  const fs = require('fs');
+  const path = require('path');
+  
+  if (capturedHandshakes.length === 0) {
+    return { success: false, message: "No handshakes captured" };
+  }
+  
+  // Create filename with timestamp and target BSSID
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const bssid = currentTarget ? currentTarget.bssid.replace(/:/g, '-') : 'unknown';
+  const filename = `handshakes_${bssid}_${timestamp}.json`;
+  const filepath = path.join(process.cwd(), 'captured_handshakes', filename);
+  
+  // Ensure directory exists
+  const dir = path.dirname(filepath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  
+  // Save handshakes with metadata
+  const data = {
+    metadata: {
+      timestamp: new Date().toISOString(),
+      target: currentTarget,
+      totalHandshakes: capturedHandshakes.length,
+      totalPackets: stats.totalPackets
+    },
+    handshakes: capturedHandshakes
+  };
+  
+  try {
+    fs.writeFileSync(filepath, JSON.stringify(data, null, 2));
+    return { 
+      success: true, 
+      message: `Saved ${capturedHandshakes.length} handshakes to ${filename}`,
+      filename: filename,
+      filepath: filepath,
+      count: capturedHandshakes.length
+    };
+  } catch (error) {
+    return { success: false, message: `Error saving handshakes: ${error.message}` };
+  }
+}
+
 // Set target BSSID and channel
 function setTarget(bssid, channel, iface) {
   if (!bssid || !channel) {
@@ -558,11 +619,13 @@ module.exports = {
   stopTshark,
   startTshark,
   ensureMonitorMode,
+  saveHandshakes,
 
   // Global data
   currentTarget,
   stats,
   tsharkProcess,
+  capturedHandshakes,
 
   // Accessors for global data
   getCurrentTarget: () => currentTarget,
