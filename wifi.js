@@ -230,7 +230,9 @@ function resetStats() {
 }
 
 function startTshark(bssid, channel, iface) {
-  console.log(`Starting capture for ${bssid} on channel ${channel} using hcxdumptool`);
+  // Use monitor interface (wlan2mon) instead of original interface
+  const monIface = iface.includes('mon') ? iface : `${iface}mon`;
+  console.log(`Starting capture for ${bssid} on channel ${channel} using ${monIface} interface`);
   
   try {
     // Stop any existing processes
@@ -245,16 +247,16 @@ function startTshark(bssid, channel, iface) {
     
     // Check interface status and availability
     try {
-      const interfaceInfo = execSync(`sudo iw dev ${iface} info`, { stdio: 'pipe' }).toString();
-      console.log(`Interface info:\n${interfaceInfo}`);
+      const interfaceInfo = execSync(`sudo iw dev ${monIface} info`, { stdio: 'pipe' }).toString();
+      console.log(`Monitor interface info:\n${interfaceInfo}`);
       
       // Check if interface is in use by other processes
-      const interfaceStatus = execSync(`sudo ip link show ${iface}`, { stdio: 'pipe' }).toString();
-      console.log(`Interface status:\n${interfaceStatus}`);
+      const interfaceStatus = execSync(`sudo ip link show ${monIface}`, { stdio: 'pipe' }).toString();
+      console.log(`Monitor interface status:\n${interfaceStatus}`);
       
       // Kill any processes using the interface
       try {
-        execSync(`sudo pkill -f "aircrack-ng|airodump-ng|tshark.*${iface}"`, { stdio: 'ignore' });
+        execSync(`sudo pkill -f "aircrack-ng|airodump-ng|tshark.*${monIface}"`, { stdio: 'ignore' });
       } catch (pkError) {
         // Ignore if no processes found
       }
@@ -262,47 +264,49 @@ function startTshark(bssid, channel, iface) {
       // Wait a moment for processes to clean up
       execSync('sleep 1');
     } catch (infoError) {
-      console.log('Failed to get interface info:', infoError.message);
+      console.log('Failed to get monitor interface info:', infoError.message);
     }
     
-    // Only set monitor mode if not already set (avoid conflicts with /mode/monitor)
-    try {
-      const modeCheck = execSync(`sudo iw dev ${iface} info | grep "type monitor"`, { stdio: 'pipe' }).toString();
-      if (!modeCheck.includes('monitor')) {
-        console.log('Monitor mode not detected, setting it up...');
-        execSync(`sudo ip link set ${iface} down`);
-        execSync(`sudo iw dev ${iface} set type monitor`);
-        execSync(`sudo ip link set ${iface} up`);
-      } else {
-        console.log('Monitor mode already enabled');
-      }
-    } catch (modeError) {
-      console.log('Checking monitor mode failed, setting it up anyway...');
-      execSync(`sudo ip link set ${iface} down`);
-      execSync(`sudo iw dev ${iface} set type monitor`);
-      execSync(`sudo ip link set ${iface} up`);
-    }
-    
-    // Set channel
-    execSync(`sudo iw dev ${iface} set channel ${channel}`);
+    // Set channel on monitor interface
+    execSync(`sudo iw dev ${monIface} set channel ${channel}`);
     
     // Verify final interface state
-    const finalModeCheck = execSync(`sudo iw dev ${iface} info | grep type`).toString();
-    console.log(`Final interface mode: ${finalModeCheck.trim()}`);
+    const finalModeCheck = execSync(`sudo iw dev ${monIface} info | grep type`).toString();
+    console.log(`Final monitor interface mode: ${finalModeCheck.trim()}`);
     
     resetStats();
 
     const { spawn } = require("child_process");
     
     // Try alternative hcxdumptool parameters
-    console.log('Starting hcxdumptool with alternative parameters...');
+    console.log('Starting hcxdumptool with monitor interface...');
     hcxdumptoolProcess = spawn("sudo", [
       "hcxdumptool",
-      "-i", iface,
+      "-i", monIface,
       "-c", channel.toString(),
       "--rds", "1",  // Show APs and CLIENTs
       "--tot", "5"     // Timeout after 5 minutes
     ]);
+
+    // Fallback to tshark if hcxdumptool fails
+    let hcxdumptoolFailed = false;
+    
+    hcxdumptoolProcess.on("error", (err) => {
+      console.error("hcxdumptool process error:", err);
+      if (err.message.includes('failed to arm interface') || err.message.includes('broken driver')) {
+        console.log('hcxdumptool failed due to driver issues, falling back to tshark...');
+        hcxdumptoolFailed = true;
+        startTsharkFallback(bssid, channel, iface);
+      }
+    });
+
+    hcxdumptoolProcess.on("close", (code) => {
+      console.log(`hcxdumptool stopped with code: ${code}`);
+      if (code !== 0 && !hcxdumptoolFailed) {
+        console.log('hcxdumptool exited with error, falling back to tshark...');
+        startTsharkFallback(bssid, channel, iface);
+      }
+    });
 
     hcxdumptoolProcess.stdout.on("data", (data) => {
       const output = data.toString();
@@ -358,14 +362,13 @@ function startTshark(bssid, channel, iface) {
 
     hcxdumptoolProcess.stderr.on("data", (data) => {
       console.error("hcxdumptool error:", data.toString());
-    });
-
-    hcxdumptoolProcess.on("close", (code) => {
-      console.log(`hcxdumptool stopped with code: ${code}`);
-    });
-
-    hcxdumptoolProcess.on("error", (err) => {
-      console.error("hcxdumptool process error:", err);
+      // Check for driver errors in stderr
+      if (data.toString().includes('failed to arm interface') || data.toString().includes('broken driver')) {
+        console.log('hcxdumptool driver errors detected, falling back to tshark...');
+        hcxdumptoolFailed = true;
+        hcxdumptoolProcess.kill();
+        startTsharkFallback(bssid, channel, iface);
+      }
     });
 
     return { status: "capture started", target: { bssid, channel, iface } };
@@ -376,8 +379,138 @@ function startTshark(bssid, channel, iface) {
   }
 }
 
+// Fallback to tshark when hcxdumptool fails
+function startTsharkFallback(bssid, channel, iface) {
+  // Use monitor interface (wlan2mon) instead of original interface
+  const monIface = iface.includes('mon') ? iface : `${iface}mon`;
+  console.log(`Starting fallback capture with tshark for ${bssid} on channel ${channel} using ${monIface}`);
+  
+  try {
+    const { spawn } = require("child_process");
+    
+    // Use tshark as fallback on monitor interface
+    tsharkProcess = spawn("sudo", [
+      "tshark",
+      "-i", monIface,
+      "-Y", `eapol || (wlan.bssid == ${bssid} || wlan.da == ${bssid} || wlan.sa == ${bssid})`,
+      "-T", "fields",
+      "-e", "wlan.sa",
+      "-e", "wlan.da", 
+      "-e", "wlan.bssid",
+      "-e", "wlan.fc.type_subtype",
+      "-e", "eapol",
+      "-e", "eapol.type"
+    ]);
+
+    tsharkProcess.stdout.on("data", (data) => {
+      const lines = data.toString().split("\n");
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+
+        const [src, dst, bssid, packetTypeRaw, eapol, eapolType] = line
+          .split("\t")
+          .map((i) => i.trim());
+
+        if (!src || !dst || !bssid) continue;
+
+        const srcLower = src.toLowerCase();
+        const dstLower = dst.toLowerCase();
+        const bssidLower = bssid.toLowerCase();
+
+        const packetType = packetTypeRaw.toLowerCase().replace("0x", "");
+
+        stats.totalPackets++;
+        if (stats.totalPackets <= 20 || stats.totalPackets % 100 === 0) {
+          console.log(
+            `tshark fallback - Packet ${stats.totalPackets}: src=${src}, dst=${dst}, bssid=${bssid}, type=${packetType}, eapol=${eapol}, eapolType=${eapolType}`,
+          );
+        }
+
+        // Detect handshakes
+        if (eapol && eapol !== "") {
+          stats.handshakeCount++;
+          
+          // Store handshake data
+          const handshakeData = {
+            timestamp: new Date().toISOString(),
+            src: src,
+            dst: dst,
+            bssid: bssid,
+            eapol: eapol,
+            eapolType: eapolType,
+            packetType: packetType,
+            channel: currentTarget ? currentTarget.channel : null,
+            iface: currentTarget ? currentTarget.iface : null,
+            source: 'tshark-fallback',
+            type: 'EAPOL'
+          };
+          capturedHandshakes.push(handshakeData);
+          
+          [srcLower, dstLower].forEach((mac) => {
+            if (mac !== bssidLower && isValidMAC(mac)) {
+              stats.clients.add(mac);
+              stats.lastSeen.set(mac, Date.now());
+            }
+          });
+          console.log(`tshark fallback - Handshake detected! Total: ${stats.handshakeCount}`);
+        }
+
+        // Detect clients
+        if (!isValidMAC(srcLower) || !isValidMAC(dstLower)) return;
+
+        if (srcLower !== bssidLower && dstLower === bssidLower) {
+          if (["20", "08"].includes(packetType)) {
+            if (
+              isValidMAC(srcLower) &&
+              !srcLower.startsWith("02:") &&
+              !srcLower.startsWith("00:")
+            ) {
+              stats.clients.add(srcLower);
+              stats.lastSeen.set(srcLower, Date.now());
+              console.log(
+                `tshark fallback - Client detected: ${srcLower} (to AP, type: ${packetType})`,
+              );
+            }
+          }
+        }
+        else if (srcLower === bssidLower && dstLower !== bssidLower) {
+          if (["20", "08"].includes(packetType)) {
+            if (isValidMAC(dstLower)) {
+              stats.clients.add(dstLower);
+              stats.lastSeen.set(dstLower, Date.now());
+              console.log(
+                `tshark fallback - Client detected: ${dstLower} (from AP, type: ${packetType})`,
+              );
+            }
+          }
+        }
+      }
+    });
+
+    tsharkProcess.stderr.on("data", (data) => {
+      console.error("tshark fallback error:", data.toString());
+    });
+
+    tsharkProcess.on("close", (code) => {
+      console.log(`tshark fallback stopped with code: ${code}`);
+    });
+
+    tsharkProcess.on("error", (err) => {
+      console.error("tshark fallback process error:", err);
+    });
+
+    console.log('tshark fallback started successfully');
+    return { status: "tshark fallback started", target: { bssid, channel, iface } };
+    
+  } catch (error) {
+    console.error("Failed to start tshark fallback:", error.message);
+    throw new Error(`Failed to start tshark fallback: ${error.message}`);
+  }
+}
+
 function stopTshark() {
-  console.log("Stopping hcxdumptool process...");
+  console.log("Stopping all capture processes...");
 
   // Kill hcxdumptool processes
   exec("sudo killall hcxdumptool", (error, stdout, stderr) => {
@@ -391,14 +524,44 @@ function stopTshark() {
     }
   });
 
-  // Kill tracked process if it exists
+  // Kill tshark fallback processes
+  exec("sudo killall tshark", (error, stdout, stderr) => {
+    if (error) {
+      console.log(
+        "killall tshark failed (process may not be running):",
+        error.message,
+      );
+    } else {
+      console.log("Successfully killed tshark processes");
+    }
+  });
+
+  // Kill tracked processes if they exist
   if (hcxdumptoolProcess) {
     hcxdumptoolProcess.kill("SIGTERM");
     hcxdumptoolProcess = null;
   }
 
+  if (tsharkProcess) {
+    tsharkProcess.kill("SIGTERM");
+    tsharkProcess = null;
+  }
+
+  // Clean up monitor interface (wlan2mon)
+  try {
+    // Check if wlan2mon exists and remove it
+    execSync("sudo ip link show wlan2mon", { stdio: 'ignore' });
+    console.log("Removing wlan2mon interface...");
+    execSync("sudo ip link set wlan2mon down");
+    execSync("sudo iw dev wlan2mon del");
+    console.log("wlan2mon interface removed successfully");
+  } catch (error) {
+    // Interface may not exist, ignore error
+    console.log("wlan2mon interface not found or already removed");
+  }
+
   resetStats();
-  console.log("hcxdumptool stopped and stats reset");
+  console.log("All capture processes stopped, monitor interface cleaned up and stats reset");
 }
 
 // Вспомогательная функция для проверки MAC
@@ -431,11 +594,22 @@ function ensureMonitorMode(iface) {
 // Switch to monitor mode
 function switchToMonitorMode(iface = "wlan2") {
   try {
-    execSync(`sudo ip link set ${iface} down`);
-    execSync(`sudo iw dev ${iface} set type monitor`);
-    execSync(`sudo ip link set ${iface} up`);
-    console.log(`${iface} switched to monitor mode`);
-    return { status: "monitor mode enabled", iface };
+    const monIface = `${iface}mon`;
+    
+    // Remove existing monitor interface if it exists
+    try {
+      execSync(`sudo ip link set ${monIface} down`, { stdio: 'ignore' });
+      execSync(`sudo iw dev ${monIface} del`, { stdio: 'ignore' });
+    } catch (delError) {
+      // Interface may not exist, ignore error
+    }
+    
+    // Create separate monitor interface
+    execSync(`sudo iw dev ${iface} interface add ${monIface} type monitor`);
+    execSync(`sudo ip link set ${monIface} up`);
+    
+    console.log(`${monIface} monitor interface created from ${iface}`);
+    return { status: "monitor mode enabled", iface: monIface };
   } catch (err) {
     console.error(err);
     throw new Error("Failed to enable monitor mode");
@@ -445,14 +619,14 @@ function switchToMonitorMode(iface = "wlan2") {
 // Switch back to managed mode
 function switchToManagedMode(iface = "wlan2") {
   try {
-    stopTshark();
-    execSync(`sudo ip link set ${iface} down`);
-    execSync(`sudo iw dev ${iface} set type managed`);
-    execSync(`sudo ip link set ${iface} up`);
-    console.log(`${iface} switched to managed mode`);
-    return { status: "managed mode enabled", iface };
+    stopTshark(); // This will clean up wlan2mon interface
+    
+    // Original interface (wlan2) should already be in managed mode
+    // since we never changed it - we only created wlan2mon
+    console.log(`${iface} already in managed mode (monitor interface cleaned up)`);
+    return { status: "managed mode restored", iface };
   } catch (err) {
-    throw new Error("Failed to switch to managed mode");
+    throw new Error("Failed to restore managed mode");
   }
 }
 
