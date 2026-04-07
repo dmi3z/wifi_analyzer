@@ -243,6 +243,28 @@ function startTshark(bssid, channel, iface) {
       }
     }
     
+    // Check interface status and availability
+    try {
+      const interfaceInfo = execSync(`sudo iw dev ${iface} info`, { stdio: 'pipe' }).toString();
+      console.log(`Interface info:\n${interfaceInfo}`);
+      
+      // Check if interface is in use by other processes
+      const interfaceStatus = execSync(`sudo ip link show ${iface}`, { stdio: 'pipe' }).toString();
+      console.log(`Interface status:\n${interfaceStatus}`);
+      
+      // Kill any processes using the interface
+      try {
+        execSync(`sudo pkill -f "aircrack-ng|airodump-ng|tshark.*${iface}"`, { stdio: 'ignore' });
+      } catch (pkError) {
+        // Ignore if no processes found
+      }
+      
+      // Wait a moment for processes to clean up
+      execSync('sleep 1');
+    } catch (infoError) {
+      console.log('Failed to get interface info:', infoError.message);
+    }
+    
     // Only set monitor mode if not already set (avoid conflicts with /mode/monitor)
     try {
       const modeCheck = execSync(`sudo iw dev ${iface} info | grep "type monitor"`, { stdio: 'pipe' }).toString();
@@ -272,13 +294,14 @@ function startTshark(bssid, channel, iface) {
 
     const { spawn } = require("child_process");
     
-    // Use hcxdumptool for all data collection
+    // Try alternative hcxdumptool parameters
+    console.log('Starting hcxdumptool with alternative parameters...');
     hcxdumptoolProcess = spawn("sudo", [
       "hcxdumptool",
       "-i", iface,
       "-c", channel.toString(),
-      "--rds", "2",
-      "--exitoneapol", "15"
+      "--rds", "1",  // Show APs and CLIENTs
+      "--tot", "5"     // Timeout after 5 minutes
     ]);
 
     hcxdumptoolProcess.stdout.on("data", (data) => {
