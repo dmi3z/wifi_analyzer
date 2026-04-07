@@ -290,8 +290,7 @@ function startTshark(bssid, channel, iface) {
 
     const { spawn } = require("child_process");
     
-    // Try alternative hcxdumptool parameters
-    console.log('Starting hcxdumptool with monitor interface...');
+    // Use hcxdumptool for packet capture and handshake detection
     hcxdumptoolProcess = spawn("sudo", [
       "hcxdumptool",
       "-i", monIface,
@@ -299,26 +298,6 @@ function startTshark(bssid, channel, iface) {
       "--rds", "1",  // Show APs and CLIENTs
       "--tot", "5"     // Timeout after 5 minutes
     ]);
-
-    // Fallback to tshark if hcxdumptool fails
-    let hcxdumptoolFailed = false;
-    
-    hcxdumptoolProcess.on("error", (err) => {
-      console.error("hcxdumptool process error:", err);
-      if (err.message.includes('failed to arm interface') || err.message.includes('broken driver')) {
-        console.log('hcxdumptool failed due to driver issues, falling back to tshark...');
-        hcxdumptoolFailed = true;
-        startTsharkFallback(bssid, channel, iface);
-      }
-    });
-
-    hcxdumptoolProcess.on("close", (code) => {
-      console.log(`hcxdumptool stopped with code: ${code}`);
-      if (code !== 0 && !hcxdumptoolFailed) {
-        console.log('hcxdumptool exited with error, falling back to tshark...');
-        startTsharkFallback(bssid, channel, iface);
-      }
-    });
 
     hcxdumptoolProcess.stdout.on("data", (data) => {
       const output = data.toString();
@@ -339,7 +318,7 @@ function startTshark(bssid, channel, iface) {
             timestamp: new Date().toISOString(),
             bssid: bssid,
             channel: channel,
-            iface: iface,
+            iface: monIface,
             type: line.includes('PMKID') ? 'PMKID' : (line.includes('HANDSHAKE') ? 'HANDSHAKE' : 'EAPOL'),
             rawOutput: line.trim(),
             source: 'hcxdumptool',
@@ -374,13 +353,15 @@ function startTshark(bssid, channel, iface) {
 
     hcxdumptoolProcess.stderr.on("data", (data) => {
       console.error("hcxdumptool error:", data.toString());
-      // Check for driver errors in stderr
-      if (data.toString().includes('failed to arm interface') || data.toString().includes('broken driver')) {
-        console.log('hcxdumptool driver errors detected, falling back to tshark...');
-        hcxdumptoolFailed = true;
-        hcxdumptoolProcess.kill();
-        startTsharkFallback(bssid, channel, iface);
-      }
+    });
+
+    hcxdumptoolProcess.on("close", (code) => {
+      console.log(`hcxdumptool stopped with code: ${code}`);
+    });
+
+    hcxdumptoolProcess.on("error", (err) => {
+      console.error("hcxdumptool process error:", err);
+      throw new Error(`Failed to start hcxdumptool: ${err.message}`);
     });
 
     return { status: "capture started", target: { bssid, channel, iface } };
@@ -391,150 +372,8 @@ function startTshark(bssid, channel, iface) {
   }
 }
 
-// Fallback to tshark when hcxdumptool fails
-function startTsharkFallback(bssid, channel, iface) {
-  // Use monitor interface (wlan2mon) instead of original interface
-  const monIface = iface.includes('mon') ? iface : `${iface}mon`;
-  console.log(`Starting fallback capture with tshark for ${bssid} on channel ${channel} using ${monIface}`);
-  
-  try {
-    // Check if monitor interface exists, create if needed
-    try {
-      const interfaceCheck = execSync(`sudo ip link show ${monIface}`, { stdio: 'pipe' }).toString();
-      console.log(`${monIface} interface exists for tshark fallback`);
-    } catch (checkError) {
-      console.log(`${monIface} interface not found, creating it for tshark fallback...`);
-      // Create monitor interface
-      execSync(`sudo iw dev ${iface} interface add ${monIface} type monitor`);
-      execSync(`sudo ip link set ${monIface} up`);
-      console.log(`${monIface} interface created successfully for tshark fallback`);
-    }
-    
-    const { spawn } = require("child_process");
-    
-    // Use tshark as fallback on monitor interface
-    tsharkProcess = spawn("sudo", [
-      "tshark",
-      "-i", monIface,
-      "-Y", `eapol || (wlan.bssid == ${bssid} || wlan.da == ${bssid} || wlan.sa == ${bssid})`,
-      "-T", "fields",
-      "-e", "wlan.sa",
-      "-e", "wlan.da", 
-      "-e", "wlan.bssid",
-      "-e", "wlan.fc.type_subtype",
-      "-e", "eapol",
-      "-e", "eapol.type"
-    ]);
-
-    tsharkProcess.stdout.on("data", (data) => {
-      const lines = data.toString().split("\n");
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-
-        const [src, dst, bssid, packetTypeRaw, eapol, eapolType] = line
-          .split("\t")
-          .map((i) => i.trim());
-
-        if (!src || !dst || !bssid) continue;
-
-        const srcLower = src.toLowerCase();
-        const dstLower = dst.toLowerCase();
-        const bssidLower = bssid.toLowerCase();
-
-        const packetType = packetTypeRaw.toLowerCase().replace("0x", "");
-
-        stats.totalPackets++;
-        if (stats.totalPackets <= 20 || stats.totalPackets % 100 === 0) {
-          console.log(
-            `tshark fallback - Packet ${stats.totalPackets}: src=${src}, dst=${dst}, bssid=${bssid}, type=${packetType}, eapol=${eapol}, eapolType=${eapolType}`,
-          );
-        }
-
-        // Detect handshakes
-        if (eapol && eapol !== "") {
-          stats.handshakeCount++;
-          
-          // Store handshake data
-          const handshakeData = {
-            timestamp: new Date().toISOString(),
-            src: src,
-            dst: dst,
-            bssid: bssid,
-            eapol: eapol,
-            eapolType: eapolType,
-            packetType: packetType,
-            channel: currentTarget ? currentTarget.channel : null,
-            iface: currentTarget ? currentTarget.iface : null,
-            source: 'tshark-fallback',
-            type: 'EAPOL'
-          };
-          capturedHandshakes.push(handshakeData);
-          
-          [srcLower, dstLower].forEach((mac) => {
-            if (mac !== bssidLower && isValidMAC(mac)) {
-              stats.clients.add(mac);
-              stats.lastSeen.set(mac, Date.now());
-            }
-          });
-          console.log(`tshark fallback - Handshake detected! Total: ${stats.handshakeCount}`);
-        }
-
-        // Detect clients
-        if (!isValidMAC(srcLower) || !isValidMAC(dstLower)) return;
-
-        if (srcLower !== bssidLower && dstLower === bssidLower) {
-          if (["20", "08"].includes(packetType)) {
-            if (
-              isValidMAC(srcLower) &&
-              !srcLower.startsWith("02:") &&
-              !srcLower.startsWith("00:")
-            ) {
-              stats.clients.add(srcLower);
-              stats.lastSeen.set(srcLower, Date.now());
-              console.log(
-                `tshark fallback - Client detected: ${srcLower} (to AP, type: ${packetType})`,
-              );
-            }
-          }
-        }
-        else if (srcLower === bssidLower && dstLower !== bssidLower) {
-          if (["20", "08"].includes(packetType)) {
-            if (isValidMAC(dstLower)) {
-              stats.clients.add(dstLower);
-              stats.lastSeen.set(dstLower, Date.now());
-              console.log(
-                `tshark fallback - Client detected: ${dstLower} (from AP, type: ${packetType})`,
-              );
-            }
-          }
-        }
-      }
-    });
-
-    tsharkProcess.stderr.on("data", (data) => {
-      console.error("tshark fallback error:", data.toString());
-    });
-
-    tsharkProcess.on("close", (code) => {
-      console.log(`tshark fallback stopped with code: ${code}`);
-    });
-
-    tsharkProcess.on("error", (err) => {
-      console.error("tshark fallback process error:", err);
-    });
-
-    console.log('tshark fallback started successfully');
-    return { status: "tshark fallback started", target: { bssid, channel, iface } };
-    
-  } catch (error) {
-    console.error("Failed to start tshark fallback:", error.message);
-    throw new Error(`Failed to start tshark fallback: ${error.message}`);
-  }
-}
-
 function stopTshark() {
-  console.log("Stopping all capture processes...");
+  console.log("Stopping hcxdumptool process...");
 
   // Kill hcxdumptool processes
   exec("sudo killall hcxdumptool", (error, stdout, stderr) => {
@@ -548,27 +387,10 @@ function stopTshark() {
     }
   });
 
-  // Kill tshark fallback processes
-  exec("sudo killall tshark", (error, stdout, stderr) => {
-    if (error) {
-      console.log(
-        "killall tshark failed (process may not be running):",
-        error.message,
-      );
-    } else {
-      console.log("Successfully killed tshark processes");
-    }
-  });
-
-  // Kill tracked processes if they exist
+  // Kill tracked process if it exists
   if (hcxdumptoolProcess) {
     hcxdumptoolProcess.kill("SIGTERM");
     hcxdumptoolProcess = null;
-  }
-
-  if (tsharkProcess) {
-    tsharkProcess.kill("SIGTERM");
-    tsharkProcess = null;
   }
 
   // Clean up monitor interface (wlan2mon)
@@ -585,7 +407,7 @@ function stopTshark() {
   }
 
   resetStats();
-  console.log("All capture processes stopped, monitor interface cleaned up and stats reset");
+  console.log("hcxdumptool stopped, monitor interface cleaned up and stats reset");
 }
 
 // Вспомогательная функция для проверки MAC
@@ -695,58 +517,137 @@ function saveHandshakes() {
     return { success: false, message: "No handshakes captured" };
   }
   
-  // Create filename with timestamp and target BSSID
+  // Create pcapng filename with timestamp and BSSID
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const bssid = currentTarget ? currentTarget.bssid.replace(/:/g, '-') : 'unknown';
-  const filename = `handshakes_${bssid}_${timestamp}.json`;
-  const filepath = path.join(process.cwd(), 'captured_handshakes', filename);
+  const pcapngFile = `handshakes_${bssid}_${timestamp}.pcapng`;
+  const pcapngPath = path.join(process.cwd(), 'captured_handshakes', pcapngFile);
   
   // Ensure directory exists
-  const dir = path.dirname(filepath);
+  const dir = path.dirname(pcapngPath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
   
-  // Prepare handshake data - combine capturedHandshakes with basic handshake info if needed
-  let handshakesToSave = [...capturedHandshakes];
-  
-  // If we have handshakeCount but no detailed data, create basic entries
-  if (capturedHandshakes.length === 0 && stats.handshakeCount > 0) {
-    handshakesToSave = [{
-      timestamp: new Date().toISOString(),
-      bssid: currentTarget ? currentTarget.bssid : 'unknown',
-      channel: currentTarget ? currentTarget.channel : null,
-      iface: currentTarget ? currentTarget.iface : null,
-      type: 'EAPOL',
-      source: 'tshark',
-      note: `Detected by tshark - ${stats.handshakeCount} total handshakes`,
-      target: currentTarget
-    }];
-  }
-  
-  // Save handshakes with metadata
-  const data = {
-    metadata: {
-      timestamp: new Date().toISOString(),
-      target: currentTarget,
-      totalHandshakes: stats.handshakeCount,
-      totalPackets: stats.totalPackets,
-      detailedHandshakes: capturedHandshakes.length,
-      clients: Array.from(stats.clients)
-    },
-    handshakes: handshakesToSave
-  };
-  
   try {
-    fs.writeFileSync(filepath, JSON.stringify(data, null, 2));
-    return { 
-      success: true, 
-      message: `Saved ${stats.handshakeCount} handshakes to ${filename}`,
-      filename: filename,
-      filepath: filepath,
-      count: stats.handshakeCount,
-      detailedCount: capturedHandshakes.length
-    };
+    // Since hcxdumptool doesn't save packets automatically, we need to restart it with pcapng recording
+    // Stop current capture
+    if (hcxdumptoolProcess) {
+      hcxdumptoolProcess.kill("SIGTERM");
+      hcxdumptoolProcess = null;
+    }
+    
+    // Start hcxdumptool with pcapng recording for a short time to capture packets
+    console.log('Starting pcapng recording for captured handshakes...');
+    
+    const { spawn } = require("child_process");
+    const monIface = currentTarget ? (currentTarget.iface.includes('mon') ? currentTarget.iface : `${currentTarget.iface}mon`) : 'wlan2mon';
+    
+    const pcapngCaptureProcess = spawn("sudo", [
+      "hcxdumptool",
+      "-i", monIface,
+      "-c", currentTarget ? currentTarget.channel.toString() : "11",
+      "-w", pcapngPath,
+      "--rds", "1",
+      "--tot", "1"  // Short capture time (1 minute) to save handshakes
+    ]);
+    
+    return new Promise((resolve) => {
+      let captureComplete = false;
+      
+      // Wait for capture to complete or timeout
+      setTimeout(() => {
+        if (!captureComplete) {
+          pcapngCaptureProcess.kill("SIGTERM");
+          captureComplete = true;
+          
+          // Check if pcapng file was created
+          if (fs.existsSync(pcapngPath)) {
+            const stat = fs.statSync(pcapngPath);
+            
+            // Also save JSON metadata for reference
+            const jsonFilename = `handshakes_${bssid}_${timestamp}.json`;
+            const jsonFilepath = path.join(dir, jsonFilename);
+            
+            const jsonData = {
+              metadata: {
+                timestamp: new Date().toISOString(),
+                target: currentTarget,
+                totalHandshakes: stats.handshakeCount,
+                totalPackets: stats.totalPackets,
+                detailedHandshakes: capturedHandshakes.length,
+                clients: Array.from(stats.clients),
+                pcapngFile: pcapngFile,
+                pcapngSize: stat.size,
+                pcapngCreated: new Date().toISOString()
+              },
+              handshakes: capturedHandshakes
+            };
+            
+            fs.writeFileSync(jsonFilepath, JSON.stringify(jsonData, null, 2));
+            
+            resolve({ 
+              success: true, 
+              message: `Saved ${stats.handshakeCount} handshakes to ${pcapngFile}`,
+              pcapngFile: pcapngFile,
+              pcapngPath: pcapngPath,
+              jsonFile: jsonFilename,
+              jsonPath: jsonFilepath,
+              count: stats.handshakeCount,
+              detailedCount: capturedHandshakes.length,
+              fileSize: stat.size
+            });
+          } else {
+            resolve({ success: false, message: "Failed to create pcapng file" });
+          }
+        }
+      }, 30000); // 30 second timeout
+      
+      pcapngCaptureProcess.on('close', (code) => {
+        if (!captureComplete) {
+          captureComplete = true;
+          
+          if (fs.existsSync(pcapngPath)) {
+            const stat = fs.statSync(pcapngPath);
+            
+            const jsonFilename = `handshakes_${bssid}_${timestamp}.json`;
+            const jsonFilepath = path.join(dir, jsonFilename);
+            
+            const jsonData = {
+              metadata: {
+                timestamp: new Date().toISOString(),
+                target: currentTarget,
+                totalHandshakes: stats.handshakeCount,
+                totalPackets: stats.totalPackets,
+                detailedHandshakes: capturedHandshakes.length,
+                clients: Array.from(stats.clients),
+                pcapngFile: pcapngFile,
+                pcapngSize: stat.size,
+                pcapngCreated: new Date().toISOString()
+              },
+              handshakes: capturedHandshakes
+            };
+            
+            fs.writeFileSync(jsonFilepath, JSON.stringify(jsonData, null, 2));
+            
+            resolve({ 
+              success: true, 
+              message: `Saved ${stats.handshakeCount} handshakes to ${pcapngFile}`,
+              pcapngFile: pcapngFile,
+              pcapngPath: pcapngPath,
+              jsonFile: jsonFilename,
+              jsonPath: jsonFilepath,
+              count: stats.handshakeCount,
+              detailedCount: capturedHandshakes.length,
+              fileSize: stat.size
+            });
+          } else {
+            resolve({ success: false, message: "Failed to create pcapng file" });
+          }
+        }
+      });
+    });
+    
   } catch (error) {
     return { success: false, message: `Error saving handshakes: ${error.message}` };
   }
