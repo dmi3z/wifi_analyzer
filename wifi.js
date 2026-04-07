@@ -229,193 +229,102 @@ function resetStats() {
 }
 
 function startTshark(bssid, channel, iface) {
-  console.log(`Starting capture for ${bssid} on channel ${channel}`);
+  console.log(`Starting handshake capture for ${bssid} on channel ${channel} using hcxdumptool`);
   execSync(`sudo iw dev ${iface} set channel ${channel}`);
   resetStats();
 
   const { spawn } = require("child_process");
+  
+  // Use hcxdumptool for handshake capture
   tsharkProcess = spawn("sudo", [
-    "tshark",
-    "-i",
-    iface,
-    "-Y",
-    `wlan.bssid == ${bssid} || wlan.da == ${bssid} || wlan.sa == ${bssid}`,
-    "-T",
-    "fields",
-    "-e",
-    "wlan.sa",
-    "-e",
-    "wlan.da",
-    "-e",
-    "wlan.bssid",
-    "-e",
-    "wlan.fc.type_subtype",
-    "-e",
-    "eapol",
+    "hcxdumptool",
+    "-i", iface,
+    "-c", channel.toString(),
+    "--enable_status",
+    "--filterlist_ap", bssid.toLowerCase(),
+    "--filtermode", "2"
   ]);
 
-  console.log(`tshark started with PID: ${tsharkProcess.pid}`);
-
-  // Интервал для удаления "мертвых" клиентов (мс)
-  const CLIENT_TIMEOUT = 30000; // 30 секунд
-
+  let handshakeBuffer = "";
+  
   tsharkProcess.stdout.on("data", (data) => {
-    try {
-      const lines = data.toString().trim().split("\n");
-      const now = Date.now();
-
-      lines.forEach((line) => {
-        if (!line.trim()) return;
-
-        const [src, dst, bssid, packetTypeRaw, eapol] = line.split("\t");
-        if (!src || !dst || !bssid) return;
-
-        // Проверяем что все поля определены
-        if (!src || !dst || !bssid || !packetTypeRaw) return;
-
-        const bssidLower = bssid.toLowerCase();
-        // Фильтруем только пакеты от/к целевой сети
-        if (bssidLower !== bssid.toLowerCase()) return;
-
-        const srcLower = src.toLowerCase();
-        const dstLower = dst.toLowerCase();
-        const packetType = packetTypeRaw.toLowerCase().replace("0x", "");
-
-        stats.totalPackets++;
-        if (stats.totalPackets <= 20 || stats.totalPackets % 100 === 0) {
-          console.log(
-            `Packet ${stats.totalPackets}: src=${src}, dst=${dst}, bssid=${bssid}, type=${packetType}, eapol=${eapol}`,
-          );
-        }
-
-        // -------------------------------
-        // 1° Add handshake / EAPOL as client
-        // -------------------------------
-        if (eapol && eapol !== "") {
-          stats.handshakeCount++;
-          // Store handshake data
-          const handshakeData = {
-            timestamp: new Date().toISOString(),
-            src: src,
-            dst: dst,
-            bssid: bssid,
-            eapol: eapol,
-            packetType: packetType,
-            channel: currentTarget ? currentTarget.channel : null,
-            iface: currentTarget ? currentTarget.iface : null
-          };
-          capturedHandshakes.push(handshakeData);
-          [srcLower, dstLower].forEach((mac) => {
-            if (mac !== bssidLower && isValidMAC(mac)) {
-              stats.clients.add(mac);
-              stats.lastSeen.set(mac, now);
-            }
-          });
-          console.log(`Handshake detected! Total: ${stats.handshakeCount}`);
-        }
-
-        // -------------------------------
-        // 2️⃣ Для клиентов - игнорируем broadcast/multicast
-        // -------------------------------
-        if (!isValidMAC(srcLower) || !isValidMAC(dstLower)) return;
-
-        // -------------------------------
-        // 3️⃣ Клиент → AP (строгая фильтрация)
-        // -------------------------------
-        if (srcLower !== bssidLower && dstLower === bssidLower) {
-          if (["20", "08"].includes(packetType)) {
-            // Только Data и QoS Data
-            if (
-              isValidMAC(srcLower) &&
-              !srcLower.startsWith("02:") &&
-              !srcLower.startsWith("00:")
-            ) {
-              stats.clients.add(srcLower);
-              stats.lastSeen.set(srcLower, now);
-              console.log(
-                `Client detected: ${srcLower} (to AP, type: ${packetType})`,
-              );
-            }
+    const output = data.toString();
+    handshakeBuffer += output;
+    
+    // Process hcxdumptool output for handshake detection
+    const lines = output.split('\n');
+    for (const line of lines) {
+      if (line.includes('HANDSHAKE') || line.includes('PMKID')) {
+        console.log(`Handshake detected: ${line.trim()}`);
+        stats.handshakeCount++;
+        
+        // Store handshake data
+        const handshakeData = {
+          timestamp: new Date().toISOString(),
+          bssid: bssid,
+          channel: channel,
+          iface: iface,
+          type: line.includes('PMKID') ? 'PMKID' : 'HANDSHAKE',
+          rawOutput: line.trim(),
+          target: currentTarget
+        };
+        capturedHandshakes.push(handshakeData);
+      }
+      
+      // Extract client MAC addresses from output
+      const macMatch = line.match(/([0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2})/g);
+      if (macMatch) {
+        const now = Date.now();
+        macMatch.forEach(mac => {
+          const macLower = mac.toLowerCase();
+          if (macLower !== bssid.toLowerCase() && isValidMAC(macLower)) {
+            stats.clients.add(macLower);
+            stats.lastSeen.set(macLower, now);
+            console.log(`Client detected: ${macLower}`);
           }
-        }
-        // -------------------------------
-        // 4️⃣ AP → Клиент (строгая фильтрация)
-        // -------------------------------
-        else if (srcLower === bssidLower && dstLower !== bssidLower) {
-          if (["20", "08"].includes(packetType)) {
-            // Только Data и QoS Data
-            if (
-              isValidMAC(dstLower) &&
-              !dstLower.startsWith("02:") &&
-              !dstLower.startsWith("00:")
-            ) {
-              stats.clients.add(dstLower);
-              stats.lastSeen.set(dstLower, now);
-              console.log(
-                `Client detected: ${dstLower} (from AP, type: ${packetType})`,
-              );
-            }
-          }
-        }
-
-        // -------------------------------
-        // 5️⃣ Удаляем "мертвые" клиенты
-        // -------------------------------
-        for (const [mac, ts] of stats.lastSeen.entries()) {
-          if (now - ts > CLIENT_TIMEOUT) {
-            stats.clients.delete(mac);
-            stats.lastSeen.delete(mac);
-          }
-        }
-      });
-    } catch (e) {
-      console.error("Parse error:", e.message);
+        });
+      }
+      
+      stats.totalPackets++;
     }
   });
 
   tsharkProcess.stderr.on("data", (d) => {
-    console.error("tshark error:", d.toString());
+    console.error("hcxdumptool error:", d.toString());
   });
 
   tsharkProcess.on("close", (code) => {
-    console.log(`tshark stopped with code: ${code}`);
+    console.log(`hcxdumptool stopped with code: ${code}`);
   });
 
   tsharkProcess.on("error", (err) => {
-    console.error("tshark process error:", err);
+    console.error("hcxdumptool process error:", err);
   });
 }
 
 function stopTshark() {
-  console.log("Stopping all tshark processes...");
+  console.log("Stopping all hcxdumptool processes...");
 
-  // Убиваем все tshark процессы
-  exec("sudo killall tshark", (error, stdout, stderr) => {
+  // Kill all hcxdumptool processes
+  exec("sudo killall hcxdumptool", (error, stdout, stderr) => {
     if (error) {
       console.log(
-        "No tshark processes to kill or killall failed:",
+        "killall hcxdumptool failed (process may not be running):",
         error.message,
       );
     } else {
-      console.log("All tshark processes killed");
+      console.log("Successfully killed hcxdumptool processes");
     }
   });
 
-  // Также пробуем убить конкретный процесс если он есть
+  // Also kill the tracked process if it exists
   if (tsharkProcess) {
-    const pid = tsharkProcess.pid;
-    exec(`sudo kill -TERM ${pid}`, (error) => {
-      setTimeout(() => {
-        exec(`sudo kill -KILL ${pid}`, (killError) => {
-          console.log(`tshark process ${pid} kill attempt completed`);
-        });
-      }, 1000);
-    });
+    tsharkProcess.kill("SIGTERM");
     tsharkProcess = null;
   }
 
   resetStats();
-  console.log("tshark stopped and stats reset");
+  console.log("hcxdumptool stopped and stats reset");
 }
 
 // Вспомогательная функция для проверки MAC
