@@ -251,6 +251,16 @@ function startTshark(bssid, channel, iface) {
       console.log(`${monIface} interface exists`);
     } catch (checkError) {
       console.log(`${monIface} interface not found, creating it...`);
+      
+      // Stop wpa_supplicant on wlan2 to free the interface
+      console.log('Stopping wpa_supplicant on wlan2...');
+      try {
+        execSync(`sudo pkill -f "wpa_supplicant.*${iface}"`, { stdio: 'ignore' });
+        execSync('sleep 1');
+      } catch (wpaError) {
+        console.log('wpa_supplicant may not be running or failed to stop');
+      }
+      
       // Create monitor interface
       execSync(`sudo iw dev ${iface} interface add ${monIface} type monitor`);
       execSync(`sudo ip link set ${monIface} up`);
@@ -405,8 +415,18 @@ function stopTshark() {
     console.log("wlan2mon interface not found or already removed");
   }
 
+  // Restart wpa_supplicant on wlan2 to restore network connectivity
+  try {
+    console.log("Restarting wpa_supplicant on wlan2...");
+    execSync("sudo wpa_supplicant -B -c/etc/wpa_supplicant/wpa_supplicant.conf -iwlan2", { stdio: 'ignore' });
+    execSync("sleep 2");
+    console.log("wpa_supplicant restarted on wlan2");
+  } catch (wpaError) {
+    console.log("Failed to restart wpa_supplicant:", wpaError.message);
+  }
+
   resetStats();
-  console.log("hcxdumptool stopped, monitor interface cleaned up and stats reset");
+  console.log("hcxdumptool stopped, monitor interface cleaned up, wpa_supplicant restarted and stats reset");
 }
 
 // Вспомогательная функция для проверки MAC
