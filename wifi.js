@@ -290,7 +290,7 @@ function startTshark(bssid, channel, iface) {
 
     const { spawn } = require("child_process");
     
-    // Use hcxdumptool for packet capture and handshake detection
+    // Use hcxdumptool with monitor interface
     hcxdumptoolProcess = spawn("sudo", [
       "hcxdumptool",
       "-i", monIface,
@@ -393,9 +393,8 @@ function stopTshark() {
     hcxdumptoolProcess = null;
   }
 
-  // Clean up monitor interface (wlan2mon)
+  // Clean up monitor interface (wlan2mon) if it exists
   try {
-    // Check if wlan2mon exists and remove it
     execSync("sudo ip link show wlan2mon", { stdio: 'ignore' });
     console.log("Removing wlan2mon interface...");
     execSync("sudo ip link set wlan2mon down");
@@ -530,19 +529,19 @@ function saveHandshakes() {
   }
   
   try {
-    // Since hcxdumptool doesn't save packets automatically, we need to restart it with pcapng recording
     // Stop current capture
     if (hcxdumptoolProcess) {
       hcxdumptoolProcess.kill("SIGTERM");
       hcxdumptoolProcess = null;
     }
     
-    // Start hcxdumptool with pcapng recording for a short time to capture packets
-    console.log('Starting pcapng recording for captured handshakes...');
+    console.log('Starting pcapng recording with hcxdumptool for captured handshakes...');
     
     const { spawn } = require("child_process");
-    const monIface = currentTarget ? (currentTarget.iface.includes('mon') ? currentTarget.iface : `${currentTarget.iface}mon`) : 'wlan2mon';
+    const iface = currentTarget ? currentTarget.iface : 'wlan2';
+    const monIface = iface.includes('mon') ? iface : `${iface}mon`;
     
+    // Use hcxdumptool for pcapng recording
     const pcapngCaptureProcess = spawn("sudo", [
       "hcxdumptool",
       "-i", monIface,
