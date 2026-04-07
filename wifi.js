@@ -245,6 +245,18 @@ function startTshark(bssid, channel, iface) {
       }
     }
     
+    // Check if monitor interface exists, create if needed
+    try {
+      const interfaceCheck = execSync(`sudo ip link show ${monIface}`, { stdio: 'pipe' }).toString();
+      console.log(`${monIface} interface exists`);
+    } catch (checkError) {
+      console.log(`${monIface} interface not found, creating it...`);
+      // Create monitor interface
+      execSync(`sudo iw dev ${iface} interface add ${monIface} type monitor`);
+      execSync(`sudo ip link set ${monIface} up`);
+      console.log(`${monIface} interface created successfully`);
+    }
+    
     // Check interface status and availability
     try {
       const interfaceInfo = execSync(`sudo iw dev ${monIface} info`, { stdio: 'pipe' }).toString();
@@ -386,6 +398,18 @@ function startTsharkFallback(bssid, channel, iface) {
   console.log(`Starting fallback capture with tshark for ${bssid} on channel ${channel} using ${monIface}`);
   
   try {
+    // Check if monitor interface exists, create if needed
+    try {
+      const interfaceCheck = execSync(`sudo ip link show ${monIface}`, { stdio: 'pipe' }).toString();
+      console.log(`${monIface} interface exists for tshark fallback`);
+    } catch (checkError) {
+      console.log(`${monIface} interface not found, creating it for tshark fallback...`);
+      // Create monitor interface
+      execSync(`sudo iw dev ${iface} interface add ${monIface} type monitor`);
+      execSync(`sudo ip link set ${monIface} up`);
+      console.log(`${monIface} interface created successfully for tshark fallback`);
+    }
+    
     const { spawn } = require("child_process");
     
     // Use tshark as fallback on monitor interface
