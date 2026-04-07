@@ -241,10 +241,8 @@ function startTshark(bssid, channel, iface) {
     "hcxdumptool",
     "-i", iface,
     "-c", channel.toString(),
-    "--enable_status",
     "--filterlist_ap", bssid.toLowerCase(),
-    "--filtermode", "2",
-    "--status_interval", "1"
+    "--filtermode", "2"
   ]);
 
   hcxdumptoolProcess.stdout.on("data", (data) => {
@@ -254,9 +252,11 @@ function startTshark(bssid, channel, iface) {
     for (const line of lines) {
       if (!line.trim()) continue;
       
+      // Log all output for debugging
+      console.log(`hcxdumptool: ${line.trim()}`);
+      
       // Parse different types of output from hcxdumptool
       if (line.includes('HANDSHAKE') || line.includes('PMKID') || line.includes('EAPOL')) {
-        console.log(`hcxdumptool handshake: ${line.trim()}`);
         stats.handshakeCount++;
         
         // Store handshake data
@@ -271,38 +271,27 @@ function startTshark(bssid, channel, iface) {
           target: currentTarget
         };
         capturedHandshakes.push(handshakeData);
-        
-        // Extract client MAC if present
-        const macMatch = line.match(/([0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2})/i);
-        if (macMatch) {
-          const clientMac = macMatch[1].toLowerCase();
+      }
+      
+      // Extract any MAC addresses as potential clients
+      const macMatches = line.match(/([0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2})/gi);
+      if (macMatches) {
+        macMatches.forEach(mac => {
+          const clientMac = mac.toLowerCase();
           if (clientMac !== bssid.toLowerCase() && isValidMAC(clientMac)) {
             stats.clients.add(clientMac);
             stats.lastSeen.set(clientMac, Date.now());
           }
-        }
+        });
       }
       
-      // Parse client information from status output
-      if (line.includes('CLIENT') || line.includes('STATION')) {
-        const macMatch = line.match(/([0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2})/i);
-        if (macMatch) {
-          const clientMac = macMatch[1].toLowerCase();
-          if (clientMac !== bssid.toLowerCase() && isValidMAC(clientMac)) {
-            stats.clients.add(clientMac);
-            stats.lastSeen.set(clientMac, Date.now());
-            console.log(`Client detected: ${clientMac}`);
-          }
-        }
-      }
-      
-      // Count packets for target AP
-      if (line.includes(bssid.toLowerCase()) || line.includes('PACKET') || line.includes('FRAME')) {
+      // Count packets - any line with activity indicates packets
+      if (line.includes(bssid.toLowerCase()) || line.includes('packet') || line.includes('frame') || line.includes('received')) {
         stats.totalPackets++;
       }
       
-      // General packet counting (fallback)
-      if (stats.totalPackets === 0 && (line.includes('received') || line.includes('captured'))) {
+      // Fallback: increment packet count for any meaningful output
+      if (stats.totalPackets < 1000 && line.trim().length > 10) {
         stats.totalPackets++;
       }
     }
