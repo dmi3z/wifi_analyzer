@@ -241,8 +241,8 @@ function startTshark(bssid, channel, iface) {
     "hcxdumptool",
     "-i", iface,
     "-c", channel.toString(),
-    "--filterlist_ap", bssid.toLowerCase(),
-    "--filtermode", "2"
+    "--rds", "2",
+    "--exitoneapol", "15"
   ]);
 
   hcxdumptoolProcess.stdout.on("data", (data) => {
