@@ -231,85 +231,119 @@ function resetStats() {
 
 function startTshark(bssid, channel, iface) {
   console.log(`Starting capture for ${bssid} on channel ${channel} using hcxdumptool`);
-  execSync(`sudo iw dev ${iface} set channel ${channel}`);
-  resetStats();
-
-  const { spawn } = require("child_process");
   
-  // Use hcxdumptool for all data collection
-  hcxdumptoolProcess = spawn("sudo", [
-    "hcxdumptool",
-    "-i", iface,
-    "-c", channel.toString(),
-    "--rds", "2",
-    "--exitoneapol", "15"
-  ]);
-
-  hcxdumptoolProcess.stdout.on("data", (data) => {
-    const output = data.toString();
-    const lines = output.split('\n');
+  try {
+    // Stop any existing processes
+    execSync(`sudo killall hcxdumptool`, { stdio: 'ignore' });
     
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      
-      // Log all output for debugging
-      console.log(`hcxdumptool: ${line.trim()}`);
-      
-      // Parse different types of output from hcxdumptool
-      if (line.includes('HANDSHAKE') || line.includes('PMKID') || line.includes('EAPOL')) {
-        stats.handshakeCount++;
-        
-        // Store handshake data
-        const handshakeData = {
-          timestamp: new Date().toISOString(),
-          bssid: bssid,
-          channel: channel,
-          iface: iface,
-          type: line.includes('PMKID') ? 'PMKID' : (line.includes('HANDSHAKE') ? 'HANDSHAKE' : 'EAPOL'),
-          rawOutput: line.trim(),
-          source: 'hcxdumptool',
-          target: currentTarget
-        };
-        capturedHandshakes.push(handshakeData);
+    // Only set monitor mode if not already set (avoid conflicts with /mode/monitor)
+    try {
+      const modeCheck = execSync(`sudo iw dev ${iface} info | grep "type monitor"`, { stdio: 'pipe' }).toString();
+      if (!modeCheck.includes('monitor')) {
+        console.log('Monitor mode not detected, setting it up...');
+        execSync(`sudo ip link set ${iface} down`);
+        execSync(`sudo iw dev ${iface} set type monitor`);
+        execSync(`sudo ip link set ${iface} up`);
+      } else {
+        console.log('Monitor mode already enabled');
       }
-      
-      // Extract any MAC addresses as potential clients
-      const macMatches = line.match(/([0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2})/gi);
-      if (macMatches) {
-        macMatches.forEach(mac => {
-          const clientMac = mac.toLowerCase();
-          if (clientMac !== bssid.toLowerCase() && isValidMAC(clientMac)) {
-            stats.clients.add(clientMac);
-            stats.lastSeen.set(clientMac, Date.now());
-          }
-        });
-      }
-      
-      // Count packets - any line with activity indicates packets
-      if (line.includes(bssid.toLowerCase()) || line.includes('packet') || line.includes('frame') || line.includes('received')) {
-        stats.totalPackets++;
-      }
-      
-      // Fallback: increment packet count for any meaningful output
-      if (stats.totalPackets < 1000 && line.trim().length > 10) {
-        stats.totalPackets++;
-      }
+    } catch (modeError) {
+      console.log('Checking monitor mode failed, setting it up anyway...');
+      execSync(`sudo ip link set ${iface} down`);
+      execSync(`sudo iw dev ${iface} set type monitor`);
+      execSync(`sudo ip link set ${iface} up`);
     }
-  });
+    
+    // Set channel
+    execSync(`sudo iw dev ${iface} set channel ${channel}`);
+    
+    // Verify final interface state
+    const finalModeCheck = execSync(`sudo iw dev ${iface} info | grep type`).toString();
+    console.log(`Final interface mode: ${finalModeCheck.trim()}`);
+    
+    resetStats();
 
-  hcxdumptoolProcess.stderr.on("data", (data) => {
-    console.error("hcxdumptool error:", data.toString());
-  });
+    const { spawn } = require("child_process");
+    
+    // Use hcxdumptool for all data collection
+    hcxdumptoolProcess = spawn("sudo", [
+      "hcxdumptool",
+      "-i", iface,
+      "-c", channel.toString(),
+      "--rds", "2",
+      "--exitoneapol", "15"
+    ]);
 
-  hcxdumptoolProcess.on("close", (code) => {
-    console.log(`hcxdumptool stopped with code: ${code}`);
-  });
+    hcxdumptoolProcess.stdout.on("data", (data) => {
+      const output = data.toString();
+      const lines = output.split('\n');
+      
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        
+        // Log all output for debugging
+        console.log(`hcxdumptool: ${line.trim()}`);
+        
+        // Parse different types of output from hcxdumptool
+        if (line.includes('HANDSHAKE') || line.includes('PMKID') || line.includes('EAPOL')) {
+          stats.handshakeCount++;
+          
+          // Store handshake data
+          const handshakeData = {
+            timestamp: new Date().toISOString(),
+            bssid: bssid,
+            channel: channel,
+            iface: iface,
+            type: line.includes('PMKID') ? 'PMKID' : (line.includes('HANDSHAKE') ? 'HANDSHAKE' : 'EAPOL'),
+            rawOutput: line.trim(),
+            source: 'hcxdumptool',
+            target: currentTarget
+          };
+          capturedHandshakes.push(handshakeData);
+        }
+        
+        // Extract any MAC addresses as potential clients
+        const macMatches = line.match(/([0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2})/gi);
+        if (macMatches) {
+          macMatches.forEach(mac => {
+            const clientMac = mac.toLowerCase();
+            if (clientMac !== bssid.toLowerCase() && isValidMAC(clientMac)) {
+              stats.clients.add(clientMac);
+              stats.lastSeen.set(clientMac, Date.now());
+            }
+          });
+        }
+        
+        // Count packets - any line with activity indicates packets
+        if (line.includes(bssid.toLowerCase()) || line.includes('packet') || line.includes('frame') || line.includes('received')) {
+          stats.totalPackets++;
+        }
+        
+        // Fallback: increment packet count for any meaningful output
+        if (stats.totalPackets < 1000 && line.trim().length > 10) {
+          stats.totalPackets++;
+        }
+      }
+    });
 
-  hcxdumptoolProcess.on("error", (err) => {
-    console.error("hcxdumptool process error:", err);
-  });
+    hcxdumptoolProcess.stderr.on("data", (data) => {
+      console.error("hcxdumptool error:", data.toString());
+    });
 
-  return { status: "capture started", target: { bssid, channel, iface } };
+    hcxdumptoolProcess.on("close", (code) => {
+      console.log(`hcxdumptool stopped with code: ${code}`);
+    });
+
+    hcxdumptoolProcess.on("error", (err) => {
+      console.error("hcxdumptool process error:", err);
+    });
+
+    return { status: "capture started", target: { bssid, channel, iface } };
+    
+  } catch (error) {
+    console.error("Failed to start hcxdumptool:", error.message);
+    throw new Error(`Failed to start capture: ${error.message}`);
+  }
 }
 
 function stopTshark() {
