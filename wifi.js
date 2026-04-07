@@ -287,6 +287,22 @@ function startTshark(bssid, channel, iface) {
       // -------------------------------
       if (eapol && eapol !== "") {
         stats.handshakeCount++;
+        
+        // Store handshake data from tshark as well
+        const handshakeData = {
+          timestamp: new Date().toISOString(),
+          src: src,
+          dst: dst,
+          bssid: bssid,
+          eapol: eapol,
+          packetType: packetType,
+          channel: currentTarget ? currentTarget.channel : null,
+          iface: currentTarget ? currentTarget.iface : null,
+          source: 'tshark',
+          type: 'EAPOL'
+        };
+        capturedHandshakes.push(handshakeData);
+        
         [srcLower, dstLower].forEach((mac) => {
           if (mac !== bssidLower && isValidMAC(mac)) {
             stats.clients.add(mac);
@@ -551,7 +567,7 @@ function saveHandshakes() {
   const fs = require('fs');
   const path = require('path');
   
-  if (capturedHandshakes.length === 0) {
+  if (capturedHandshakes.length === 0 && stats.handshakeCount === 0) {
     return { success: false, message: "No handshakes captured" };
   }
   
@@ -567,25 +583,45 @@ function saveHandshakes() {
     fs.mkdirSync(dir, { recursive: true });
   }
   
+  // Prepare handshake data - combine capturedHandshakes with basic handshake info if needed
+  let handshakesToSave = [...capturedHandshakes];
+  
+  // If we have handshakeCount but no detailed data, create basic entries
+  if (capturedHandshakes.length === 0 && stats.handshakeCount > 0) {
+    handshakesToSave = [{
+      timestamp: new Date().toISOString(),
+      bssid: currentTarget ? currentTarget.bssid : 'unknown',
+      channel: currentTarget ? currentTarget.channel : null,
+      iface: currentTarget ? currentTarget.iface : null,
+      type: 'EAPOL',
+      source: 'tshark',
+      note: `Detected by tshark - ${stats.handshakeCount} total handshakes`,
+      target: currentTarget
+    }];
+  }
+  
   // Save handshakes with metadata
   const data = {
     metadata: {
       timestamp: new Date().toISOString(),
       target: currentTarget,
-      totalHandshakes: capturedHandshakes.length,
-      totalPackets: stats.totalPackets
+      totalHandshakes: stats.handshakeCount,
+      totalPackets: stats.totalPackets,
+      detailedHandshakes: capturedHandshakes.length,
+      clients: Array.from(stats.clients)
     },
-    handshakes: capturedHandshakes
+    handshakes: handshakesToSave
   };
   
   try {
     fs.writeFileSync(filepath, JSON.stringify(data, null, 2));
     return { 
       success: true, 
-      message: `Saved ${capturedHandshakes.length} handshakes to ${filename}`,
+      message: `Saved ${stats.handshakeCount} handshakes to ${filename}`,
       filename: filename,
       filepath: filepath,
-      count: capturedHandshakes.length
+      count: stats.handshakeCount,
+      detailedCount: capturedHandshakes.length
     };
   } catch (error) {
     return { success: false, message: `Error saving handshakes: ${error.message}` };
