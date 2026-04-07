@@ -9,6 +9,7 @@ const wifi = require("./wifi");
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(express.static('browser'));
 
 // Глобальная обработка ошибок
 process.on("uncaughtException", (error) => {
