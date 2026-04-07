@@ -234,7 +234,14 @@ function startTshark(bssid, channel, iface) {
   
   try {
     // Stop any existing processes
-    execSync(`sudo killall hcxdumptool`, { stdio: 'ignore' });
+    try {
+      execSync(`sudo killall hcxdumptool`, { stdio: 'ignore' });
+    } catch (killError) {
+      // Ignore "no process found" errors - this is normal
+      if (!killError.message.includes('no process found') && !killError.message.includes('not found')) {
+        console.log('Warning: killall hcxdumptool failed:', killError.message);
+      }
+    }
     
     // Only set monitor mode if not already set (avoid conflicts with /mode/monitor)
     try {
