@@ -270,14 +270,13 @@ function startTshark(bssid, channel, iface) {
 
     const { spawn } = require("child_process");
     
-    // Use hcxdumptool with wlan2 interface directly
+    // Use hcxdumptool with wlan2 interface directly and minimal parameters
     hcxdumptoolProcess = spawn("sudo", [
       "hcxdumptool",
       "-i", iface,
       "-c", channel.toString(),
       "--rds", "1",  // Show APs and CLIENTs
-      "--tot", "5",     // Timeout after 5 minutes
-      "--disable_client_attacks", "1"  // Disable client attacks to avoid driver issues
+      "--tot", "5"     // Timeout after 5 minutes
     ]);
 
     hcxdumptoolProcess.stdout.on("data", (data) => {
