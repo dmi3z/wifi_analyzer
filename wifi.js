@@ -578,7 +578,6 @@ function setTarget(bssid, channel, iface) {
   };
 
   ensureMonitorMode(newIface);
-  stopTshark();
   
   if (currentTarget) {
     startTshark(currentTarget.bssid, currentTarget.channel, currentTarget.iface);

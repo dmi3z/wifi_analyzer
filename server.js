@@ -1404,18 +1404,6 @@ app.get("/wlanconnection", (req, res) => {
   }
 });
 
-// Switch back to managed mode
-app.post("/mode/managed", (req, res) => {
-  const iface = req.body.iface || "wlan2";
-  try {
-    const result = wifi.switchToManagedMode(iface);
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ error: "Failed to switch to managed mode" });
-  }
-});
-
-// Set target BSSID and channel
 
 // Start Wi-Fi capture
 app.post("/wifi/target", (req, res) => {
