@@ -315,12 +315,11 @@ function startTshark(bssid, channel, iface) {
     
     console.log(`Recording to: ${pcapngPath}`);
     
-    // Use hcxdumptool with monitor interface and correct pcapng parameters
+    // Use hcxdumptool with monitor interface and minimal parameters
     hcxdumptoolProcess = spawn("sudo", [
       "hcxdumptool",
       "-i", monIface,
-      "-w", pcapngPath,
-      "--enable_status=1"
+      "-w", pcapngPath
     ]);
 
     hcxdumptoolProcess.stdout.on("data", (data) => {
