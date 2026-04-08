@@ -248,6 +248,14 @@ function startTshark(bssid, channel, iface) {
     // Clean up interface with working manual commands
     console.log("Setting up monitor mode...");
     
+    // Check if wlan2 interface exists first
+    try {
+      execSync(`sudo ip link show ${iface}`, { stdio: "pipe" });
+      console.log(`${iface} interface found`);
+    } catch (checkError) {
+      throw new Error(`Interface ${iface} not found: ${checkError.message}`);
+    }
+    
     // Step 1: Bring down wlan2
     execSync(`sudo ip link set ${iface} down`);
     console.log(`${iface} brought down`);
