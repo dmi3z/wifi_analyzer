@@ -192,20 +192,21 @@ let packetStats = {
   pps: 0
 };
 
-// --- Start constant tshark process ---
-function startConstantTshark() {
+// --- Start tshark process with BSSID filter ---
+function startTsharkWithFilter(targetBSSID) {
   if (tsharkProcess) {
-    console.log("tshark process already running");
-    return;
+    console.log("tshark process already running, stopping it first");
+    stopTshark();
   }
 
-  console.log("Starting constant tshark process...");
+  console.log(`Starting tshark with filter for BSSID: ${targetBSSID}`);
   
   tsharkProcess = spawn("sudo", [
     "tshark",
     "-i", "wlan2",
+    "-Y", `wlan.bssid == ${targetBSSID}`,
     "-T", "fields",
-    "-e", "wlan.bssid"
+    "-e", "frame.time_epoch"
   ]);
 
   tsharkProcess.stdout.on("data", (data) => {
@@ -214,13 +215,8 @@ function startConstantTshark() {
     for (const line of lines) {
       if (!line.trim()) continue;
       
-      const bssid = line.trim().toLowerCase();
       packetStats.totalPackets++;
-      
-      // Filter by current target BSSID
-      if (currentTarget && bssid === currentTarget.bssid.toLowerCase()) {
-        packetStats.targetPackets++;
-      }
+      packetStats.targetPackets++;
     }
   });
 
@@ -243,11 +239,8 @@ function startConstantTshark() {
     packetStats.totalPackets = 0;
   }, 1000);
 
-  console.log("Constant tshark process started");
+  console.log(`tshark started with filter for ${targetBSSID}`);
 }
-
-// Start tshark on module load
-startConstantTshark();
 
 // ==========================
 // Utility functions
@@ -260,6 +253,10 @@ function setTarget(bssid, channel, iface) {
     channel: channel,
     iface: iface
   };
+  
+  // Start tshark with specific BSSID filter
+  startTsharkWithFilter(bssid);
+  
   console.log(`Target set to: ${bssid} on channel ${channel}`);
   return { status: "target set", target: currentTarget };
 }
@@ -277,6 +274,7 @@ function getStats() {
 // Stop capture (cleanup)
 function stopCapture() {
   if (tsharkProcess) {
+    console.log("Stopping tshark process...");
     tsharkProcess.kill("SIGTERM");
     tsharkProcess = null;
   }
