@@ -1698,6 +1698,7 @@ app.post("/wifi/start-capture-handshakes", (req, res) => {
     "120", // защита от зависания (2 минуты)
   ]);
 
+  let buffer = "";
   captureProcess.stdout.on("data", (data) => {
     buffer += data.toString();
 
