@@ -249,20 +249,6 @@ function startConstantTshark() {
 // Start tshark on module load
 startConstantTshark();
 
-// Очистка неактивных клиентов каждые 30 секунд
-setInterval(() => {
-  const now = Date.now();
-  const timeout = 10000; // 10 секунд неактивности
-
-  for (const [mac, lastSeen] of stats.lastSeen.entries()) {
-    if (now - lastSeen > timeout) {
-      stats.clients.delete(mac);
-      stats.lastSeen.delete(mac);
-      console.log(`Removed inactive client: ${mac}`);
-    }
-  }
-}, 30000);
-
 // ==========================
 // Utility functions
 // ==========================
