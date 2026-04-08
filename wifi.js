@@ -200,9 +200,6 @@ setInterval(() => {
 
 // --- Start tshark process with BSSID filter ---
 function startTsharkWithFilter(targetBSSID) {
-  console.log(`[DEBUG] startTsharkWithFilter called with BSSID: ${targetBSSID}`);
-  console.log(`[DEBUG] Current tsharkProcess exists: ${!!tsharkProcess}`);
-  console.log(`[DEBUG] Starting tshark with filter for BSSID: ${targetBSSID}`);
   
   const tsharkArgs = [
     "tshark",
@@ -256,6 +253,13 @@ function setTarget(bssid, channel, iface) {
   };
   
   console.log(`[DEBUG] currentTarget set to: ${JSON.stringify(currentTarget)}`);
+  
+  // Set the correct channel for wlan2
+  try {
+    execSync(`sudo iw dev wlan2 set channel ${channel}`, { stdio: "pipe" });
+  } catch (channelError) {
+    console.log(`[DEBUG] Failed to set channel ${channel}: ${channelError.message}`);
+  }
   
   // Start tshark asynchronously to avoid blocking
   console.log(`[DEBUG] About to call startTsharkWithFilter asynchronously`);
