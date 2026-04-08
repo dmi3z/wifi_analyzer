@@ -230,9 +230,7 @@ function resetStats() {
 }
 
 function startTshark(bssid, channel, iface) {
-  // Use monitor interface (wlan2mon) instead of original interface
-  const monIface = iface.includes('mon') ? iface : `${iface}mon`;
-  console.log(`Starting capture for ${bssid} on channel ${channel} using ${monIface} interface`);
+  console.log(`Starting capture for ${bssid} on channel ${channel} using ${iface} interface directly`);
   
   try {
     // Stop any existing processes
@@ -245,96 +243,38 @@ function startTshark(bssid, channel, iface) {
       }
     }
     
-    // Check if monitor interface exists, create if needed
+    // Check interface status
     try {
-      const interfaceCheck = execSync(`sudo ip link show ${monIface}`, { stdio: 'pipe' }).toString();
-      console.log(`${monIface} interface exists`);
-    } catch (checkError) {
-      console.log(`${monIface} interface not found, creating it...`);
+      const interfaceInfo = execSync(`sudo iw dev ${iface} info`, { stdio: 'pipe' }).toString();
+      console.log(`Interface info:\n${interfaceInfo}`);
       
-      // Try alternative interface creation method
-      try {
-        // Method 1: Use iw dev (if wlan2 still exists)
-        execSync(`sudo iw dev ${iface} interface add ${monIface} type monitor`);
-        console.log(`${monIface} created using iw dev ${iface}`);
-      } catch (method1Error) {
-        console.log(`Method 1 failed: ${method1Error.message}`);
-        try {
-          // Method 2: Use iw phy (direct phy access)
-          execSync(`sudo iw phy phy0 interface add ${monIface} type monitor`);
-          console.log(`${monIface} created using iw phy phy0`);
-        } catch (method2Error) {
-          console.log(`Method 2 failed: ${method2Error.message}`);
-          throw new Error(`Failed to create ${monIface} interface with both methods`);
-        }
-      }
-      
-      execSync(`sudo ip link set ${monIface} up`);
-      console.log(`${monIface} interface created and up successfully`);
-    }
-    
-    // Check interface status and availability
-    try {
-      const interfaceInfo = execSync(`sudo iw dev ${monIface} info`, { stdio: 'pipe' }).toString();
-      console.log(`Monitor interface info:\n${interfaceInfo}`);
-      
-      // Check if interface is in use by other processes
-      const interfaceStatus = execSync(`sudo ip link show ${monIface}`, { stdio: 'pipe' }).toString();
-      console.log(`Monitor interface status:\n${interfaceStatus}`);
-      
-      // Kill any processes using the interface
-      try {
-        execSync(`sudo pkill -f "aircrack-ng|airodump-ng|tshark.*${monIface}"`, { stdio: 'ignore' });
-      } catch (pkError) {
-        // Ignore if no processes found
-      }
-      
-      // Wait a moment for processes to clean up
-      execSync('sleep 1');
+      const interfaceStatus = execSync(`sudo ip link show ${iface}`, { stdio: 'pipe' }).toString();
+      console.log(`Interface status:\n${interfaceStatus}`);
     } catch (infoError) {
-      console.log('Failed to get monitor interface info:', infoError.message);
+      console.log('Failed to get interface info:', infoError.message);
     }
     
-    // Set channel on monitor interface
+    // Set channel on interface
     try {
-      // Bring interface down before setting channel to avoid busy error
-      execSync(`sudo ip link set ${monIface} down`);
-      execSync('sleep 1');
-      execSync(`sudo iw dev ${monIface} set channel ${channel}`);
-      execSync(`sudo ip link set ${monIface} up`);
-      console.log(`Channel ${channel} set successfully on ${monIface}`);
+      execSync(`sudo iw dev ${iface} set channel ${channel}`);
+      console.log(`Channel ${channel} set successfully on ${iface}`);
     } catch (channelError) {
-      console.log('Failed to set channel, retrying with interface reset...');
-      try {
-        // Reset interface completely
-        execSync(`sudo ip link set ${monIface} down`);
-        execSync('sleep 2');
-        execSync(`sudo iw dev ${monIface} del`);
-        execSync('sleep 1');
-        execSync(`sudo iw dev ${iface} interface add ${monIface} type monitor`);
-        execSync(`sudo ip link set ${monIface} up`);
-        execSync('sleep 1');
-        execSync(`sudo iw dev ${monIface} set channel ${channel}`);
-        console.log(`Channel ${channel} set successfully after interface reset`);
-      } catch (retryError) {
-        throw new Error(`Failed to set channel ${channel} on ${monIface}: ${retryError.message}`);
-      }
+      throw new Error(`Failed to set channel ${channel} on ${iface}: ${channelError.message}`);
     }
     
     // Verify final interface state
-    const finalModeCheck = execSync(`sudo iw dev ${monIface} info | grep type`).toString();
-    console.log(`Final monitor interface mode: ${finalModeCheck.trim()}`);
+    const finalModeCheck = execSync(`sudo iw dev ${iface} info | grep type`).toString();
+    console.log(`Final interface mode: ${finalModeCheck.trim()}`);
     
     resetStats();
 
     const { spawn } = require("child_process");
     
-    // Use hcxdumptool with monitor interface and different parameters
+    // Use hcxdumptool with wlan2 interface directly
     hcxdumptoolProcess = spawn("sudo", [
       "hcxdumptool",
-      "-i", monIface,
+      "-i", iface,
       "-c", channel.toString(),
-      "--enable_status", "1",  // Enable status output
       "--rds", "1",  // Show APs and CLIENTs
       "--tot", "5",     // Timeout after 5 minutes
       "--disable_client_attacks", "1"  // Disable client attacks to avoid driver issues
@@ -359,7 +299,7 @@ function startTshark(bssid, channel, iface) {
             timestamp: new Date().toISOString(),
             bssid: bssid,
             channel: channel,
-            iface: monIface,
+            iface: iface,
             type: line.includes('PMKID') ? 'PMKID' : (line.includes('HANDSHAKE') ? 'HANDSHAKE' : 'EAPOL'),
             rawOutput: line.trim(),
             source: 'hcxdumptool',
@@ -434,20 +374,8 @@ function stopTshark() {
     hcxdumptoolProcess = null;
   }
 
-  // Clean up monitor interface (wlan2mon) if it exists
-  try {
-    execSync("sudo ip link show wlan2mon", { stdio: 'ignore' });
-    console.log("Removing wlan2mon interface...");
-    execSync("sudo ip link set wlan2mon down");
-    execSync("sudo iw dev wlan2mon del");
-    console.log("wlan2mon interface removed successfully");
-  } catch (error) {
-    // Interface may not exist, ignore error
-    console.log("wlan2mon interface not found or already removed");
-  }
-
   resetStats();
-  console.log("hcxdumptool stopped, monitor interface cleaned up and stats reset");
+  console.log("hcxdumptool stopped and stats reset");
 }
 
 // Вспомогательная функция для проверки MAC
@@ -580,12 +508,11 @@ function saveHandshakes() {
     
     const { spawn } = require("child_process");
     const iface = currentTarget ? currentTarget.iface : 'wlan2';
-    const monIface = iface.includes('mon') ? iface : `${iface}mon`;
     
     // Use hcxdumptool for pcapng recording
     const pcapngCaptureProcess = spawn("sudo", [
       "hcxdumptool",
-      "-i", monIface,
+      "-i", iface,
       "-c", currentTarget ? currentTarget.channel.toString() : "11",
       "-w", pcapngPath,
       "--rds", "1",
