@@ -5,6 +5,7 @@ const { spawn, exec, execSync } = require("child_process");
 const fs = require("fs");
 const bluetooth = require("./bluetooth");
 const wifi = require("./wifi");
+const path = require("path");
 
 let captureProcess = null;
 let currentPcapFile = null;
