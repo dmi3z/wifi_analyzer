@@ -202,18 +202,6 @@ setInterval(() => {
 function startTsharkWithFilter(targetBSSID) {
   console.log(`[DEBUG] startTsharkWithFilter called with BSSID: ${targetBSSID}`);
   console.log(`[DEBUG] Current tsharkProcess exists: ${!!tsharkProcess}`);
-  
-  if (tsharkProcess) {
-    console.log("[DEBUG] tshark process already running, killing it first");
-    try {
-      tsharkProcess.kill("SIGTERM");
-      tsharkProcess = null;
-      console.log("[DEBUG] Successfully killed existing tshark process");
-    } catch (killError) {
-      console.log("[DEBUG] Failed to kill existing tshark process:", killError.message);
-    }
-  }
-
   console.log(`[DEBUG] Starting tshark with filter for BSSID: ${targetBSSID}`);
   
   const tsharkArgs = [
@@ -224,14 +212,9 @@ function startTsharkWithFilter(targetBSSID) {
     "-e", "frame.time_epoch"
   ];
   
-  console.log(`[DEBUG] tshark command: sudo ${tsharkArgs.join(' ')}`);
-  
   tsharkProcess = spawn("sudo", tsharkArgs);
-  
-  console.log(`[DEBUG] tshark process spawned with PID: ${tsharkProcess.pid}`);
 
   tsharkProcess.stdout.on("data", (data) => {
-    console.log(`[DEBUG] tshark stdout received: ${data.toString().trim()}`);
     const lines = data.toString().split('\n');
     
     for (const line of lines) {
@@ -277,23 +260,22 @@ function setTarget(bssid, channel, iface) {
   
   // Start tshark asynchronously to avoid blocking
   console.log(`[DEBUG] About to call startTsharkWithFilter asynchronously`);
-  setTimeout(() => {
-    startTsharkWithFilter(bssid);
-  }, 0);
+  startTsharkWithFilter(bssid);
+
   
   console.log(`[DEBUG] setTarget completed, returning response immediately`);
   return { status: "target set", target: currentTarget };
 }
 
 // Get current stats for SSE
-function getStats() {
-  return {
-    pps: packetStats.pps,
-    targetPackets: packetStats.targetPackets,
-    currentTarget: currentTarget,
-    timestamp: new Date().toISOString()
-  };
-}
+// function getStats() {
+//   return {
+//     pps: packetStats.pps,
+//     targetPackets: packetStats.targetPackets,
+//     currentTarget: currentTarget,
+//     timestamp: new Date().toISOString()
+//   };
+// }
 
 // Stop capture (cleanup)
 function stopCapture() {
@@ -585,29 +567,6 @@ function saveHandshakes() {
       message: `Error saving handshakes: ${error.message}`,
     };
   }
-}
-
-// Set target BSSID and channel
-function setTarget(bssid, channel, iface) {
-  if (!bssid || !channel) {
-    throw new Error("bssid and channel are required");
-  }
-
-  const newIface = iface || currentTarget.iface;
-
-  currentTarget = {
-    bssid: bssid.toUpperCase(),
-    channel,
-    iface: newIface,
-  };
-
-  ensureMonitorMode(newIface);
-  
-  if (currentTarget) {
-    startTshark(currentTarget.bssid, currentTarget.channel, currentTarget.iface);
-  }
-
-  return { status: "target set", target: currentTarget };
 }
 
 // Wi-Fi scan endpoint

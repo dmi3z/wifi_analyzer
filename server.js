@@ -1418,12 +1418,8 @@ app.get("/wlanconnection", (req, res) => {
 
 // Start Wi-Fi capture
 app.post("/wifi/target", (req, res) => {
-  console.log("[DEBUG] /wifi/target endpoint called");
-  console.log("[DEBUG] Request body:", JSON.stringify(req.body));
-  
+
   const { bssid, channel, iface } = req.body;
-  
-  console.log(`[DEBUG] Extracted params: bssid=${bssid}, channel=${channel}, iface=${iface}`);
   
   // Validate required fields
   if (!bssid) {
@@ -1440,8 +1436,6 @@ app.post("/wifi/target", (req, res) => {
   
   try {
     const result = wifi.setTarget(bssid, channel, iface || "wlan2");
-    console.log("[DEBUG] wifi.setTarget returned:", JSON.stringify(result));
-    console.log("[DEBUG] Sending response to client");
     res.json(result);
   } catch (err) {
     console.log("[DEBUG] Error in wifi.setTarget:", err.message);
