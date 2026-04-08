@@ -198,56 +198,65 @@ setInterval(() => {
   packetStats.totalPackets = 0;
 }, 1000);
 
-// --- Start simple tshark process ---
+// --- Start tshark process with BSSID filter ---
 function startTsharkWithFilter(targetBSSID) {
+  console.log(`[DEBUG] startTsharkWithFilter called with BSSID: ${targetBSSID}`);
+  console.log(`[DEBUG] Current tsharkProcess exists: ${!!tsharkProcess}`);
+  
   if (tsharkProcess) {
-    console.log("tshark process already running, killing it first");
+    console.log("[DEBUG] tshark process already running, killing it first");
     try {
       tsharkProcess.kill("SIGTERM");
       tsharkProcess = null;
+      console.log("[DEBUG] Successfully killed existing tshark process");
     } catch (killError) {
-      console.log("Failed to kill existing tshark process:", killError.message);
+      console.log("[DEBUG] Failed to kill existing tshark process:", killError.message);
     }
   }
 
-  console.log(`Starting tshark for BSSID: ${targetBSSID}`);
+  console.log(`[DEBUG] Starting tshark with filter for BSSID: ${targetBSSID}`);
   
-  tsharkProcess = spawn("sudo", [
+  const tsharkArgs = [
     "tshark",
     "-i", "wlan2",
+    "-Y", `wlan.bssid == ${targetBSSID}`,
     "-T", "fields",
-    "-e", "wlan.bssid",
     "-e", "frame.time_epoch"
-  ]);
+  ];
+  
+  console.log(`[DEBUG] tshark command: sudo ${tsharkArgs.join(' ')}`);
+  
+  tsharkProcess = spawn("sudo", tsharkArgs);
+  
+  console.log(`[DEBUG] tshark process spawned with PID: ${tsharkProcess.pid}`);
 
   tsharkProcess.stdout.on("data", (data) => {
+    console.log(`[DEBUG] tshark stdout received: ${data.toString().trim()}`);
     const lines = data.toString().split('\n');
     
     for (const line of lines) {
       if (!line.trim()) continue;
       
-      const [bssid, timestamp] = line.trim().split('\t');
-      if (bssid && bssid.toLowerCase() === targetBSSID.toLowerCase()) {
-        packetStats.totalPackets++;
-        packetStats.targetPackets++;
-      }
+      packetStats.totalPackets++;
+      packetStats.targetPackets++;
+      console.log(`[DEBUG] Packet counted: total=${packetStats.totalPackets}, target=${packetStats.targetPackets}`);
     }
   });
 
   tsharkProcess.stderr.on("data", (data) => {
-    console.error("tshark error:", data.toString());
+    console.log(`[DEBUG] tshark stderr: ${data.toString().trim()}`);
   });
 
   tsharkProcess.on("close", (code) => {
-    console.log(`tshark process stopped with code: ${code}`);
+    console.log(`[DEBUG] tshark process stopped with code: ${code}`);
     tsharkProcess = null;
   });
 
   tsharkProcess.on("error", (err) => {
-    console.error("tshark process error:", err);
+    console.log(`[DEBUG] tshark process error: ${err.message}`);
   });
 
-  console.log(`tshark started for ${targetBSSID}`);
+  console.log(`[DEBUG] tshark started with filter for ${targetBSSID}, function returning`);
 }
 
 // ==========================
@@ -256,16 +265,22 @@ function startTsharkWithFilter(targetBSSID) {
 
 // Set target BSSID for filtering
 function setTarget(bssid, channel, iface) {
+  console.log(`[DEBUG] setTarget called with bssid=${bssid}, channel=${channel}, iface=${iface}`);
+  
   currentTarget = {
     bssid: bssid.toLowerCase(),
     channel: channel,
     iface: iface
   };
   
-  // Start tshark with specific BSSID filter
-  startTsharkWithFilter(bssid);
+  console.log(`[DEBUG] currentTarget set to: ${JSON.stringify(currentTarget)}`);
   
-  console.log(`Target set to: ${bssid} on channel ${channel}`);
+  // Start tshark with specific BSSID filter
+  console.log(`[DEBUG] About to call startTsharkWithFilter`);
+  startTsharkWithFilter(bssid);
+  console.log(`[DEBUG] startTsharkWithFilter returned`);
+  
+  console.log(`[DEBUG] setTarget completed, returning response`);
   return { status: "target set", target: currentTarget };
 }
 
