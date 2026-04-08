@@ -252,10 +252,25 @@ function startTshark(bssid, channel, iface) {
     } catch (checkError) {
       console.log(`${monIface} interface not found, creating it...`);
       
-      // Create monitor interface (wlan2 is disabled system-wide)
-      execSync(`sudo iw phy phy0 interface add ${monIface} type monitor`);
+      // Try alternative interface creation method
+      try {
+        // Method 1: Use iw dev (if wlan2 still exists)
+        execSync(`sudo iw dev ${iface} interface add ${monIface} type monitor`);
+        console.log(`${monIface} created using iw dev ${iface}`);
+      } catch (method1Error) {
+        console.log(`Method 1 failed: ${method1Error.message}`);
+        try {
+          // Method 2: Use iw phy (direct phy access)
+          execSync(`sudo iw phy phy0 interface add ${monIface} type monitor`);
+          console.log(`${monIface} created using iw phy phy0`);
+        } catch (method2Error) {
+          console.log(`Method 2 failed: ${method2Error.message}`);
+          throw new Error(`Failed to create ${monIface} interface with both methods`);
+        }
+      }
+      
       execSync(`sudo ip link set ${monIface} up`);
-      console.log(`${monIface} interface created successfully`);
+      console.log(`${monIface} interface created and up successfully`);
     }
     
     // Check interface status and availability
@@ -314,13 +329,15 @@ function startTshark(bssid, channel, iface) {
 
     const { spawn } = require("child_process");
     
-    // Use hcxdumptool with monitor interface
+    // Use hcxdumptool with monitor interface and different parameters
     hcxdumptoolProcess = spawn("sudo", [
       "hcxdumptool",
       "-i", monIface,
       "-c", channel.toString(),
+      "--enable_status", "1",  // Enable status output
       "--rds", "1",  // Show APs and CLIENTs
-      "--tot", "5"     // Timeout after 5 minutes
+      "--tot", "5",     // Timeout after 5 minutes
+      "--disable_client_attacks", "1"  // Disable client attacks to avoid driver issues
     ]);
 
     hcxdumptoolProcess.stdout.on("data", (data) => {
