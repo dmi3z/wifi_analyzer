@@ -198,7 +198,7 @@ setInterval(() => {
   packetStats.totalPackets = 0;
 }, 1000);
 
-// --- Start tshark process with BSSID filter ---
+// --- Start simple tshark process ---
 function startTsharkWithFilter(targetBSSID) {
   if (tsharkProcess) {
     console.log("tshark process already running, killing it first");
@@ -210,13 +210,13 @@ function startTsharkWithFilter(targetBSSID) {
     }
   }
 
-  console.log(`Starting tshark with filter for BSSID: ${targetBSSID}`);
+  console.log(`Starting tshark for BSSID: ${targetBSSID}`);
   
   tsharkProcess = spawn("sudo", [
     "tshark",
     "-i", "wlan2",
-    "-Y", `wlan.bssid == ${targetBSSID}`,
     "-T", "fields",
+    "-e", "wlan.bssid",
     "-e", "frame.time_epoch"
   ]);
 
@@ -226,8 +226,11 @@ function startTsharkWithFilter(targetBSSID) {
     for (const line of lines) {
       if (!line.trim()) continue;
       
-      packetStats.totalPackets++;
-      packetStats.targetPackets++;
+      const [bssid, timestamp] = line.trim().split('\t');
+      if (bssid && bssid.toLowerCase() === targetBSSID.toLowerCase()) {
+        packetStats.totalPackets++;
+        packetStats.targetPackets++;
+      }
     }
   });
 
@@ -244,7 +247,7 @@ function startTsharkWithFilter(targetBSSID) {
     console.error("tshark process error:", err);
   });
 
-  console.log(`tshark started with filter for ${targetBSSID}`);
+  console.log(`tshark started for ${targetBSSID}`);
 }
 
 // ==========================
