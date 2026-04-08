@@ -230,7 +230,9 @@ function resetStats() {
 }
 
 function startTshark(bssid, channel, iface) {
-  console.log(`Starting capture for ${bssid} on channel ${channel} using ${iface} interface directly`);
+  // Use monitor interface (wlan2mon) instead of original interface
+  const monIface = iface.includes('mon') ? iface : `${iface}mon`;
+  console.log(`Starting capture for ${bssid} on channel ${channel} using ${monIface} interface`);
   
   try {
     // Stop any existing processes
@@ -243,40 +245,82 @@ function startTshark(bssid, channel, iface) {
       }
     }
     
-    // Check interface status
+    // Create monitor interface with proper commands
+    console.log('Setting up monitor interface...');
+    
+    // Step 1: Bring down wlan2
+    execSync(`sudo ip link set ${iface} down`);
+    console.log(`${iface} brought down`);
+    
+    // Step 2: Add monitor interface
     try {
-      const interfaceInfo = execSync(`sudo iw dev ${iface} info`, { stdio: 'pipe' }).toString();
-      console.log(`Interface info:\n${interfaceInfo}`);
-      
-      const interfaceStatus = execSync(`sudo ip link show ${iface}`, { stdio: 'pipe' }).toString();
-      console.log(`Interface status:\n${interfaceStatus}`);
-    } catch (infoError) {
-      console.log('Failed to get interface info:', infoError.message);
+      execSync(`sudo iw dev ${iface} interface add ${monIface} type monitor`);
+      console.log(`${monIface} interface created`);
+    } catch (addError) {
+      // If interface already exists, delete it first
+      try {
+        execSync(`sudo iw dev ${monIface} del`);
+        execSync('sleep 1');
+        execSync(`sudo iw dev ${iface} interface add ${monIface} type monitor`);
+        console.log(`${monIface} interface recreated`);
+      } catch (recreateError) {
+        throw new Error(`Failed to create ${monIface}: ${recreateError.message}`);
+      }
     }
     
-    // Set channel on interface
+    // Step 3: Bring up monitor interface
+    execSync(`sudo ip link set ${monIface} up`);
+    console.log(`${monIface} brought up`);
+    
+    // Verify interface status
     try {
-      execSync(`sudo iw dev ${iface} set channel ${channel}`);
-      console.log(`Channel ${channel} set successfully on ${iface}`);
+      const interfaceInfo = execSync(`sudo iw dev ${monIface} info`, { stdio: 'pipe' }).toString();
+      console.log(`Monitor interface info:\n${interfaceInfo}`);
+      
+      const interfaceStatus = execSync(`sudo ip link show ${monIface}`, { stdio: 'pipe' }).toString();
+      console.log(`Monitor interface status:\n${interfaceStatus}`);
+    } catch (infoError) {
+      console.log('Failed to get monitor interface info:', infoError.message);
+    }
+    
+    // Set channel on monitor interface
+    try {
+      execSync(`sudo iw dev ${monIface} set channel ${channel}`);
+      console.log(`Channel ${channel} set successfully on ${monIface}`);
     } catch (channelError) {
-      throw new Error(`Failed to set channel ${channel} on ${iface}: ${channelError.message}`);
+      throw new Error(`Failed to set channel ${channel} on ${monIface}: ${channelError.message}`);
     }
     
     // Verify final interface state
-    const finalModeCheck = execSync(`sudo iw dev ${iface} info | grep type`).toString();
-    console.log(`Final interface mode: ${finalModeCheck.trim()}`);
+    const finalModeCheck = execSync(`sudo iw dev ${monIface} info | grep type`).toString();
+    console.log(`Final monitor interface mode: ${finalModeCheck.trim()}`);
     
     resetStats();
 
     const { spawn } = require("child_process");
     
-    // Use hcxdumptool with wlan2 interface directly and minimal parameters
+    // Create pcapng filename with timestamp and BSSID
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const bssidClean = bssid.replace(/:/g, '-');
+    const pcapngFile = `capture_${bssidClean}_${timestamp}.pcapng`;
+    const pcapngPath = `./captured_handshakes/${pcapngFile}`;
+    
+    // Ensure directory exists
+    const fs = require('fs');
+    const path = require('path');
+    const dir = path.dirname(pcapngPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    
+    console.log(`Recording to: ${pcapngPath}`);
+    
+    // Use hcxdumptool with monitor interface and pcapng output
     hcxdumptoolProcess = spawn("sudo", [
       "hcxdumptool",
-      "-i", iface,
-      "-c", channel.toString(),
-      "--rds", "1",  // Show APs and CLIENTs
-      "--tot", "5"     // Timeout after 5 minutes
+      "-i", monIface,
+      "-o", pcapngPath,
+      "--enable_status=1"
     ]);
 
     hcxdumptoolProcess.stdout.on("data", (data) => {
@@ -298,10 +342,11 @@ function startTshark(bssid, channel, iface) {
             timestamp: new Date().toISOString(),
             bssid: bssid,
             channel: channel,
-            iface: iface,
+            iface: monIface,
             type: line.includes('PMKID') ? 'PMKID' : (line.includes('HANDSHAKE') ? 'HANDSHAKE' : 'EAPOL'),
             rawOutput: line.trim(),
             source: 'hcxdumptool',
+            pcapngFile: pcapngFile,
             target: currentTarget
           };
           capturedHandshakes.push(handshakeData);
@@ -373,8 +418,29 @@ function stopTshark() {
     hcxdumptoolProcess = null;
   }
 
+  // Clean up monitor interface (wlan2mon) if it exists
+  try {
+    execSync("sudo ip link show wlan2mon", { stdio: 'ignore' });
+    console.log("Removing wlan2mon interface...");
+    execSync("sudo ip link set wlan2mon down");
+    execSync("sudo iw dev wlan2mon del");
+    console.log("wlan2mon interface removed successfully");
+  } catch (error) {
+    // Interface may not exist, ignore error
+    console.log("wlan2mon interface not found or already removed");
+  }
+
+  // Bring back wlan2 if needed
+  try {
+    execSync("sudo ip link show wlan2", { stdio: 'ignore' });
+    execSync("sudo ip link set wlan2 up");
+    console.log("wlan2 interface brought back up");
+  } catch (error) {
+    console.log("wlan2 interface not found or already up");
+  }
+
   resetStats();
-  console.log("hcxdumptool stopped and stats reset");
+  console.log("hcxdumptool stopped, monitor interface cleaned up and stats reset");
 }
 
 // Вспомогательная функция для проверки MAC
