@@ -6,6 +6,39 @@ const fs = require("fs");
 const bluetooth = require("./bluetooth");
 const wifi = require("./wifi");
 
+// Setup wlan2 monitor mode on server start
+try {
+  console.log("Setting up wlan2 monitor mode...");
+  
+  // Check if wlan2 exists
+  try {
+    execSync("sudo ip link show wlan2", { stdio: "pipe" });
+    console.log("wlan2 interface found");
+  } catch (checkError) {
+    console.log("wlan2 interface not found, skipping monitor mode setup");
+  }
+  
+  // Check current mode
+  try {
+    const currentMode = execSync("sudo iw dev wlan2 info | grep type", { stdio: "pipe" }).toString().trim();
+    console.log(`Current wlan2 mode: ${currentMode}`);
+    
+    if (currentMode.includes("monitor")) {
+      console.log("wlan2 already in monitor mode");
+    } else {
+      console.log("Setting wlan2 to monitor mode...");
+      execSync("sudo ip link set wlan2 down");
+      execSync("sudo iw dev wlan2 set type monitor");
+      execSync("sudo ip link set wlan2 up");
+      console.log("wlan2 set to monitor mode successfully");
+    }
+  } catch (modeError) {
+    console.log("Failed to check/set wlan2 mode:", modeError.message);
+  }
+} catch (setupError) {
+  console.log("Monitor mode setup failed:", setupError.message);
+}
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -1362,17 +1395,6 @@ app.post("/btmon/stop", (req, res) => {
 
 //// === WIFI
 
-// Switch to monitor mode
-app.post("/mode/monitor", (req, res) => {
-  const iface = req.body.iface || "wlan2";
-  try {
-    const result = wifi.switchToMonitorMode(iface);
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ error: "Failed to enable monitor mode" });
-  }
-});
-
 app.get("/wlanconnection", (req, res) => {
   try {
     const interfaces = wifi.getWlanConnection();
@@ -1416,23 +1438,16 @@ app.get("/wifi/stream", (req, res) => {
 
   const interval = setInterval(() => {
     const stats = wifi.getStats();
-    const clientsArray = Array.from(stats.clients);
-
-    // Ограничиваем количество клиентов для отображения
-    const maxClients = 100;
-    const limitedClients = clientsArray.slice(0, maxClients);
-
-    const clientsWithNames = limitedClients.map((mac) => getDeviceName(mac));
-
+    
     res.write(
       `data: ${JSON.stringify({
-        ...stats,
-        clients: clientsWithNames,
-        totalClientsFound: clientsArray.length,
-        target: wifi.getCurrentTarget(),
+        pps: stats.pps,
+        targetPackets: stats.targetPackets,
+        currentTarget: stats.currentTarget,
+        timestamp: stats.timestamp
       })}\n\n`,
     );
-  }, 500);
+  }, 1000);
 
   req.on("close", () => {
     clearInterval(interval);

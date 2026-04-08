@@ -184,23 +184,70 @@ async function parseNetworkBlock(block, allChannels) {
 // ==========================
 // Global variables
 // ==========================
-let currentTarget = {
-  bssid: null,
-  channel: null,
-  iface: "wlan2",
-};
-
+let currentTarget = null;
 let tsharkProcess = null;
-let hcxdumptoolProcess = null; // Main process for all data collection
-
-let stats = {
+let packetStats = {
   totalPackets: 0,
-  handshakeCount: 0,
-  clients: new Set(),
-  lastSeen: new Map(), // Время последнего обнаружения для каждого клиента
+  targetPackets: 0,
+  pps: 0
 };
 
-let capturedHandshakes = []; // Store captured handshake data with timestamps and packet info
+// --- Start constant tshark process ---
+function startConstantTshark() {
+  if (tsharkProcess) {
+    console.log("tshark process already running");
+    return;
+  }
+
+  console.log("Starting constant tshark process...");
+  
+  tsharkProcess = spawn("sudo", [
+    "tshark",
+    "-i", "wlan2",
+    "-T", "fields",
+    "-e", "wlan.bssid"
+  ]);
+
+  tsharkProcess.stdout.on("data", (data) => {
+    const lines = data.toString().split('\n');
+    
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      
+      const bssid = line.trim().toLowerCase();
+      packetStats.totalPackets++;
+      
+      // Filter by current target BSSID
+      if (currentTarget && bssid === currentTarget.bssid.toLowerCase()) {
+        packetStats.targetPackets++;
+      }
+    }
+  });
+
+  tsharkProcess.stderr.on("data", (data) => {
+    console.error("tshark error:", data.toString());
+  });
+
+  tsharkProcess.on("close", (code) => {
+    console.log(`tshark process stopped with code: ${code}`);
+    tsharkProcess = null;
+  });
+
+  tsharkProcess.on("error", (err) => {
+    console.error("tshark process error:", err);
+  });
+
+  // Calculate PPS every second
+  setInterval(() => {
+    packetStats.pps = packetStats.totalPackets;
+    packetStats.totalPackets = 0;
+  }, 1000);
+
+  console.log("Constant tshark process started");
+}
+
+// Start tshark on module load
+startConstantTshark();
 
 // Очистка неактивных клиентов каждые 30 секунд
 setInterval(() => {
@@ -219,251 +266,61 @@ setInterval(() => {
 // ==========================
 // Utility functions
 // ==========================
-function resetStats() {
-  stats = {
-    totalPackets: 0,
-    handshakeCount: 0,
-    clients: new Set(),
-    lastSeen: new Map(),
+
+// Set target BSSID for filtering
+function setTarget(bssid, channel, iface) {
+  currentTarget = {
+    bssid: bssid.toLowerCase(),
+    channel: channel,
+    iface: iface
   };
-  capturedHandshakes = [];
+  console.log(`Target set to: ${bssid} on channel ${channel}`);
+  return { status: "target set", target: currentTarget };
+}
+
+// Get current stats for SSE
+function getStats() {
+  return {
+    pps: packetStats.pps,
+    targetPackets: packetStats.targetPackets,
+    currentTarget: currentTarget,
+    timestamp: new Date().toISOString()
+  };
+}
+
+// Stop capture (cleanup)
+function stopCapture() {
+  if (tsharkProcess) {
+    tsharkProcess.kill("SIGTERM");
+    tsharkProcess = null;
+  }
+  currentTarget = null;
+  console.log("Capture stopped");
+}
+
+// Simple functions for compatibility
+function switchToMonitorMode(iface = "wlan2") {
+  return { status: "monitor mode already set", iface };
+}
+
+function switchToManagedMode(iface = "wlan2") {
+  return { status: "managed mode", iface };
 }
 
 function startTshark(bssid, channel, iface) {
-  console.log(`Starting capture for ${bssid} on channel ${channel} using ${iface} in monitor mode`);
-  
-  try {
-    // Stop any existing processes
-    try {
-      execSync(`sudo killall hcxdumptool`, { stdio: "ignore" });
-    } catch (killError) {
-      if (
-        !killError.message.includes("no process found") &&
-        !killError.message.includes("not found")
-      ) {
-        console.log("Warning: killall hcxdumptool failed:", killError.message);
-      }
-    }
-
-    // Clean up interface with working manual commands
-    console.log("Setting up monitor mode...");
-    
-    // Check if wlan2 interface exists first
-    try {
-      execSync(`sudo ip link show ${iface}`, { stdio: "pipe" });
-      console.log(`${iface} interface found`);
-    } catch (checkError) {
-      throw new Error(`Interface ${iface} not found: ${checkError.message}`);
-    }
-    
-    // Step 1: Bring down wlan2
-    execSync(`sudo ip link set ${iface} down`);
-    console.log(`${iface} brought down`);
-    
-    // Step 2: Remove any existing wlan2mon
-    try {
-      execSync(`sudo iw dev wlan2mon del 2>/dev/null`);
-    } catch (delError) {
-      // Ignore if interface doesn't exist
-    }
-    
-    // Step 3: Set wlan2 to monitor mode
-    execSync(`sudo iw dev ${iface} set type monitor`);
-    console.log(`${iface} set to monitor mode`);
-    
-    // Step 4: Bring up wlan2
-    execSync(`sudo ip link set ${iface} up`);
-    console.log(`${iface} brought up`);
-    
-    // Verify interface status
-    try {
-      const interfaceInfo = execSync(`sudo iw dev ${iface} info`, {
-        stdio: "pipe",
-      }).toString();
-      console.log(`Interface info:\n${interfaceInfo}`);
-      
-      const interfaceStatus = execSync(`sudo ip link show ${iface}`, {
-        stdio: "pipe",
-      }).toString();
-      console.log(`Interface status:\n${interfaceStatus}`);
-    } catch (infoError) {
-      console.log("Failed to get interface info:", infoError.message);
-    }
-    
-    // Set channel on interface
-    try {
-      execSync(`sudo iw dev ${iface} set channel ${channel}`);
-      console.log(`Channel ${channel} set successfully on ${iface}`);
-    } catch (channelError) {
-      throw new Error(
-        `Failed to set channel ${channel} on ${iface}: ${channelError.message}`,
-      );
-    }
-    
-    // Verify final interface state
-    const finalModeCheck = execSync(
-      `sudo iw dev ${iface} info | grep type`,
-    ).toString();
-    console.log(`Final interface mode: ${finalModeCheck.trim()}`);
-    
-    resetStats();
-
-    const { spawn } = require("child_process");
-
-    // Create pcapng filename with timestamp and BSSID
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const bssidClean = bssid.replace(/:/g, "-");
-    const pcapngFile = `capture_${bssidClean}_${timestamp}.pcapng`;
-    const pcapngPath = `./captured_handshakes/${pcapngFile}`;
-
-    // Ensure directory exists
-    const fs = require("fs");
-    const path = require("path");
-    const dir = path.dirname(pcapngPath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-
-    console.log(`Recording to: ${pcapngPath}`);
-
-    // Use hcxdumptool with minimal working parameters
-    hcxdumptoolProcess = spawn("sudo", [
-      "hcxdumptool",
-      "-i",
-      iface,
-      "-w",
-      pcapngPath,
-    ]);
-
-    hcxdumptoolProcess.stdout.on("data", (data) => {
-      const output = data.toString();
-      const lines = output.split("\n");
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-
-        // Log all output for debugging
-        console.log(`hcxdumptool: ${line.trim()}`);
-
-        // Parse different types of output from hcxdumptool
-        if (
-          line.includes("HANDSHAKE") ||
-          line.includes("PMKID") ||
-          line.includes("EAPOL")
-        ) {
-          stats.handshakeCount++;
-
-          // Store handshake data
-          const handshakeData = {
-            timestamp: new Date().toISOString(),
-            bssid: bssid,
-            channel: channel,
-            iface: iface,
-            type: line.includes("PMKID")
-              ? "PMKID"
-              : line.includes("HANDSHAKE")
-                ? "HANDSHAKE"
-                : "EAPOL",
-            rawOutput: line.trim(),
-            source: "hcxdumptool",
-            pcapngFile: pcapngFile,
-            target: currentTarget,
-          };
-          capturedHandshakes.push(handshakeData);
-        }
-
-        // Extract any MAC addresses as potential clients
-        const macMatches = line.match(
-          /([0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2})/gi,
-        );
-        if (macMatches) {
-          macMatches.forEach((mac) => {
-            const clientMac = mac.toLowerCase();
-            if (clientMac !== bssid.toLowerCase() && isValidMAC(clientMac)) {
-              stats.clients.add(clientMac);
-              stats.lastSeen.set(clientMac, Date.now());
-            }
-          });
-        }
-
-        // Count packets - any line with activity indicates packets
-        if (
-          line.includes(bssid.toLowerCase()) ||
-          line.includes("packet") ||
-          line.includes("frame") ||
-          line.includes("received")
-        ) {
-          stats.totalPackets++;
-        }
-
-        // Fallback: increment packet count for any meaningful output
-        if (stats.totalPackets < 1000 && line.trim().length > 10) {
-          stats.totalPackets++;
-        }
-      }
-    });
-
-    hcxdumptoolProcess.stderr.on("data", (data) => {
-      console.error("hcxdumptool error:", data.toString());
-    });
-
-    hcxdumptoolProcess.on("close", (code) => {
-      console.log(`hcxdumptool stopped with code: ${code}`);
-    });
-
-    hcxdumptoolProcess.on("error", (err) => {
-      console.error("hcxdumptool process error:", err);
-      throw new Error(`Failed to start hcxdumptool: ${err.message}`);
-    });
-
-    return { status: "capture started", target: { bssid, channel, iface } };
-  } catch (error) {
-    console.error("Failed to start hcxdumptool:", error.message);
-    throw new Error(`Failed to start capture: ${error.message}`);
-  }
+  return setTarget(bssid, channel, iface);
 }
 
 function stopTshark() {
-  console.log("Stopping hcxdumptool process...");
-
-  // Kill hcxdumptool processes
-  exec("sudo killall hcxdumptool", (error, stdout, stderr) => {
-    if (error) {
-      console.log(
-        "killall hcxdumptool failed (process may not be running):",
-        error.message,
-      );
-    } else {
-      console.log("Successfully killed hcxdumptool processes");
-    }
-  });
-
-  // Kill tracked process if it exists
-  if (hcxdumptoolProcess) {
-    hcxdumptoolProcess.kill("SIGTERM");
-    hcxdumptoolProcess = null;
-  }
-
-  // Clean up wlan2 monitor mode
-  try {
-    execSync("sudo ip link show wlan2", { stdio: "ignore" });
-    console.log("Cleaning up wlan2 monitor mode...");
-    execSync("sudo ip link set wlan2 down");
-    execSync("sudo iw dev wlan2 set type managed");
-    execSync("sudo ip link set wlan2 up");
-    console.log("wlan2 restored to managed mode");
-  } catch (error) {
-    console.log("Failed to restore wlan2 to managed mode:", error.message);
-  }
-
-  resetStats();
-  console.log("hcxdumptool stopped and wlan2 restored to managed mode");
+  return stopCapture();
 }
 
-// Вспомогательная функция для проверки MAC
+function saveHandshakes() {
+  return { success: false, message: "Handshake saving not implemented in simple mode" };
+}
+
 function isValidMAC(mac) {
   if (!mac) return false;
-  mac = mac.toLowerCase();
   if (mac === "ff:ff:ff:ff:ff:ff") return false;
   if (mac.startsWith("33:33") || mac.startsWith("01:00:5e")) return false;
   return true;
