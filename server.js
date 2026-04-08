@@ -1744,6 +1744,17 @@ app.post("/wifi/stop-capture-handshakes", (req, res) => {
 
   const outputHashFile = currentPcapFile.replace(".pcapng", ".hc22000");
 
+  // Check if hcxpcapngtool is available
+  try {
+    execSync("which hcxpcapngtool", { stdio: "pipe" });
+  } catch (toolError) {
+    console.log("hcxpcapngtool not found, skipping conversion");
+    return res.json({
+      message: "Capture stopped (conversion skipped - hcxpcapngtool not found)",
+      pcap: currentPcapFile,
+    });
+  }
+
   const convert = spawn("hcxpcapngtool", [
     "-o",
     outputHashFile,
