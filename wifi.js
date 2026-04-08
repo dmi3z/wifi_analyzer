@@ -192,11 +192,22 @@ let packetStats = {
   pps: 0
 };
 
+// Calculate PPS every second globally
+setInterval(() => {
+  packetStats.pps = packetStats.totalPackets;
+  packetStats.totalPackets = 0;
+}, 1000);
+
 // --- Start tshark process with BSSID filter ---
 function startTsharkWithFilter(targetBSSID) {
   if (tsharkProcess) {
-    console.log("tshark process already running, stopping it first");
-    stopTshark();
+    console.log("tshark process already running, killing it first");
+    try {
+      tsharkProcess.kill("SIGTERM");
+      tsharkProcess = null;
+    } catch (killError) {
+      console.log("Failed to kill existing tshark process:", killError.message);
+    }
   }
 
   console.log(`Starting tshark with filter for BSSID: ${targetBSSID}`);
@@ -232,12 +243,6 @@ function startTsharkWithFilter(targetBSSID) {
   tsharkProcess.on("error", (err) => {
     console.error("tshark process error:", err);
   });
-
-  // Calculate PPS every second
-  setInterval(() => {
-    packetStats.pps = packetStats.totalPackets;
-    packetStats.totalPackets = 0;
-  }, 1000);
 
   console.log(`tshark started with filter for ${targetBSSID}`);
 }
