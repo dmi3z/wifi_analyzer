@@ -1779,7 +1779,6 @@ app.post("/deauth/:bssid", (req, res) => {
     }
     res.json({
       bssid,
-      station: station || "all",
       result: stdout || stderr,
       status: "Deauth sent",
     });
