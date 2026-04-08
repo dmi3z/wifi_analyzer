@@ -581,7 +581,10 @@ function setTarget(bssid, channel, iface) {
 
   ensureMonitorMode(newIface);
   stopTshark();
-  startTshark(currentTarget.bssid, currentTarget.channel, currentTarget.iface);
+  
+  if (currentTarget) {
+    startTshark(currentTarget.bssid, currentTarget.channel, currentTarget.iface);
+  }
 
   return { status: "target set", target: currentTarget };
 }

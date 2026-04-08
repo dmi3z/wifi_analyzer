@@ -1420,8 +1420,18 @@ app.post("/mode/managed", (req, res) => {
 // Start Wi-Fi capture
 app.post("/wifi/target", (req, res) => {
   const { bssid, channel, iface } = req.body;
+  
+  // Validate required fields
+  if (!bssid) {
+    return res.status(400).json({ error: "BSSID is required" });
+  }
+  
+  if (!channel) {
+    return res.status(400).json({ error: "Channel is required" });
+  }
+  
   try {
-    const result = wifi.setTarget(bssid, channel, iface);
+    const result = wifi.setTarget(bssid, channel, iface || "wlan2");
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
