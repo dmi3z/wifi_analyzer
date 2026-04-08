@@ -10,6 +10,17 @@ const wifi = require("./wifi");
 try {
   console.log("Setting up wlan2 monitor mode...");
   
+  // Add signal handlers for graceful shutdown
+  process.on('SIGINT', () => {
+    console.log('\nReceived SIGINT, shutting down gracefully...');
+    process.exit(0);
+  });
+  
+  process.on('SIGTERM', () => {
+    console.log('\nReceived SIGTERM, shutting down gracefully...');
+    process.exit(0);
+  });
+  
   // Check if wlan2 exists
   try {
     execSync("sudo ip link show wlan2", { stdio: "pipe" });
@@ -1407,21 +1418,33 @@ app.get("/wlanconnection", (req, res) => {
 
 // Start Wi-Fi capture
 app.post("/wifi/target", (req, res) => {
+  console.log("[DEBUG] /wifi/target endpoint called");
+  console.log("[DEBUG] Request body:", JSON.stringify(req.body));
+  
   const { bssid, channel, iface } = req.body;
+  
+  console.log(`[DEBUG] Extracted params: bssid=${bssid}, channel=${channel}, iface=${iface}`);
   
   // Validate required fields
   if (!bssid) {
+    console.log("[DEBUG] BSSID validation failed");
     return res.status(400).json({ error: "BSSID is required" });
   }
   
   if (!channel) {
+    console.log("[DEBUG] Channel validation failed");
     return res.status(400).json({ error: "Channel is required" });
   }
   
+  console.log("[DEBUG] Validation passed, calling wifi.setTarget");
+  
   try {
     const result = wifi.setTarget(bssid, channel, iface || "wlan2");
+    console.log("[DEBUG] wifi.setTarget returned:", JSON.stringify(result));
+    console.log("[DEBUG] Sending response to client");
     res.json(result);
   } catch (err) {
+    console.log("[DEBUG] Error in wifi.setTarget:", err.message);
     res.status(400).json({ error: err.message });
   }
 });
