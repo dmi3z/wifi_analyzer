@@ -230,131 +230,146 @@ function resetStats() {
 }
 
 function startTshark(bssid, channel, iface) {
-  // Use monitor interface (wlan2mon) instead of original interface
-  const monIface = iface.includes('mon') ? iface : `${iface}mon`;
-  console.log(`Starting capture for ${bssid} on channel ${channel} using ${monIface} interface`);
+  console.log(`Starting capture for ${bssid} on channel ${channel} using ${iface} in monitor mode`);
   
   try {
     // Stop any existing processes
     try {
-      execSync(`sudo killall hcxdumptool`, { stdio: 'ignore' });
+      execSync(`sudo killall hcxdumptool`, { stdio: "ignore" });
     } catch (killError) {
-      // Ignore "no process found" errors - this is normal
-      if (!killError.message.includes('no process found') && !killError.message.includes('not found')) {
-        console.log('Warning: killall hcxdumptool failed:', killError.message);
+      if (
+        !killError.message.includes("no process found") &&
+        !killError.message.includes("not found")
+      ) {
+        console.log("Warning: killall hcxdumptool failed:", killError.message);
       }
     }
-    
-    // Create monitor interface with proper commands
-    console.log('Setting up monitor interface...');
+
+    // Clean up interface with working manual commands
+    console.log("Setting up monitor mode...");
     
     // Step 1: Bring down wlan2
     execSync(`sudo ip link set ${iface} down`);
     console.log(`${iface} brought down`);
     
-    // Step 2: Add monitor interface
+    // Step 2: Remove any existing wlan2mon
     try {
-      execSync(`sudo iw dev ${iface} interface add ${monIface} type monitor`);
-      console.log(`${monIface} interface created`);
-    } catch (addError) {
-      // If interface already exists, delete it first
-      try {
-        execSync(`sudo iw dev ${monIface} del`);
-        execSync('sleep 1');
-        execSync(`sudo iw dev ${iface} interface add ${monIface} type monitor`);
-        console.log(`${monIface} interface recreated`);
-      } catch (recreateError) {
-        throw new Error(`Failed to create ${monIface}: ${recreateError.message}`);
-      }
+      execSync(`sudo iw dev wlan2mon del 2>/dev/null`);
+    } catch (delError) {
+      // Ignore if interface doesn't exist
     }
     
-    // Step 3: Bring up monitor interface
-    execSync(`sudo ip link set ${monIface} up`);
-    console.log(`${monIface} brought up`);
+    // Step 3: Set wlan2 to monitor mode
+    execSync(`sudo iw dev ${iface} set type monitor`);
+    console.log(`${iface} set to monitor mode`);
+    
+    // Step 4: Bring up wlan2
+    execSync(`sudo ip link set ${iface} up`);
+    console.log(`${iface} brought up`);
     
     // Verify interface status
     try {
-      const interfaceInfo = execSync(`sudo iw dev ${monIface} info`, { stdio: 'pipe' }).toString();
-      console.log(`Monitor interface info:\n${interfaceInfo}`);
+      const interfaceInfo = execSync(`sudo iw dev ${iface} info`, {
+        stdio: "pipe",
+      }).toString();
+      console.log(`Interface info:\n${interfaceInfo}`);
       
-      const interfaceStatus = execSync(`sudo ip link show ${monIface}`, { stdio: 'pipe' }).toString();
-      console.log(`Monitor interface status:\n${interfaceStatus}`);
+      const interfaceStatus = execSync(`sudo ip link show ${iface}`, {
+        stdio: "pipe",
+      }).toString();
+      console.log(`Interface status:\n${interfaceStatus}`);
     } catch (infoError) {
-      console.log('Failed to get monitor interface info:', infoError.message);
+      console.log("Failed to get interface info:", infoError.message);
     }
     
-    // Set channel on monitor interface
+    // Set channel on interface
     try {
-      execSync(`sudo iw dev ${monIface} set channel ${channel}`);
-      console.log(`Channel ${channel} set successfully on ${monIface}`);
+      execSync(`sudo iw dev ${iface} set channel ${channel}`);
+      console.log(`Channel ${channel} set successfully on ${iface}`);
     } catch (channelError) {
-      throw new Error(`Failed to set channel ${channel} on ${monIface}: ${channelError.message}`);
+      throw new Error(
+        `Failed to set channel ${channel} on ${iface}: ${channelError.message}`,
+      );
     }
     
     // Verify final interface state
-    const finalModeCheck = execSync(`sudo iw dev ${monIface} info | grep type`).toString();
-    console.log(`Final monitor interface mode: ${finalModeCheck.trim()}`);
+    const finalModeCheck = execSync(
+      `sudo iw dev ${iface} info | grep type`,
+    ).toString();
+    console.log(`Final interface mode: ${finalModeCheck.trim()}`);
     
     resetStats();
 
     const { spawn } = require("child_process");
-    
+
     // Create pcapng filename with timestamp and BSSID
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const bssidClean = bssid.replace(/:/g, '-');
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const bssidClean = bssid.replace(/:/g, "-");
     const pcapngFile = `capture_${bssidClean}_${timestamp}.pcapng`;
     const pcapngPath = `./captured_handshakes/${pcapngFile}`;
-    
+
     // Ensure directory exists
-    const fs = require('fs');
-    const path = require('path');
+    const fs = require("fs");
+    const path = require("path");
     const dir = path.dirname(pcapngPath);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    
+
     console.log(`Recording to: ${pcapngPath}`);
-    
-    // Use hcxdumptool with monitor interface and minimal parameters
+
+    // Use hcxdumptool with minimal working parameters
     hcxdumptoolProcess = spawn("sudo", [
       "hcxdumptool",
-      "-i", monIface,
-      "-w", pcapngPath
+      "-i",
+      iface,
+      "-w",
+      pcapngPath,
     ]);
 
     hcxdumptoolProcess.stdout.on("data", (data) => {
       const output = data.toString();
-      const lines = output.split('\n');
-      
+      const lines = output.split("\n");
+
       for (const line of lines) {
         if (!line.trim()) continue;
-        
+
         // Log all output for debugging
         console.log(`hcxdumptool: ${line.trim()}`);
-        
+
         // Parse different types of output from hcxdumptool
-        if (line.includes('HANDSHAKE') || line.includes('PMKID') || line.includes('EAPOL')) {
+        if (
+          line.includes("HANDSHAKE") ||
+          line.includes("PMKID") ||
+          line.includes("EAPOL")
+        ) {
           stats.handshakeCount++;
-          
+
           // Store handshake data
           const handshakeData = {
             timestamp: new Date().toISOString(),
             bssid: bssid,
             channel: channel,
-            iface: monIface,
-            type: line.includes('PMKID') ? 'PMKID' : (line.includes('HANDSHAKE') ? 'HANDSHAKE' : 'EAPOL'),
+            iface: iface,
+            type: line.includes("PMKID")
+              ? "PMKID"
+              : line.includes("HANDSHAKE")
+                ? "HANDSHAKE"
+                : "EAPOL",
             rawOutput: line.trim(),
-            source: 'hcxdumptool',
+            source: "hcxdumptool",
             pcapngFile: pcapngFile,
-            target: currentTarget
+            target: currentTarget,
           };
           capturedHandshakes.push(handshakeData);
         }
-        
+
         // Extract any MAC addresses as potential clients
-        const macMatches = line.match(/([0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2})/gi);
+        const macMatches = line.match(
+          /([0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2})/gi,
+        );
         if (macMatches) {
-          macMatches.forEach(mac => {
+          macMatches.forEach((mac) => {
             const clientMac = mac.toLowerCase();
             if (clientMac !== bssid.toLowerCase() && isValidMAC(clientMac)) {
               stats.clients.add(clientMac);
@@ -362,12 +377,17 @@ function startTshark(bssid, channel, iface) {
             }
           });
         }
-        
+
         // Count packets - any line with activity indicates packets
-        if (line.includes(bssid.toLowerCase()) || line.includes('packet') || line.includes('frame') || line.includes('received')) {
+        if (
+          line.includes(bssid.toLowerCase()) ||
+          line.includes("packet") ||
+          line.includes("frame") ||
+          line.includes("received")
+        ) {
           stats.totalPackets++;
         }
-        
+
         // Fallback: increment packet count for any meaningful output
         if (stats.totalPackets < 1000 && line.trim().length > 10) {
           stats.totalPackets++;
@@ -389,7 +409,6 @@ function startTshark(bssid, channel, iface) {
     });
 
     return { status: "capture started", target: { bssid, channel, iface } };
-    
   } catch (error) {
     console.error("Failed to start hcxdumptool:", error.message);
     throw new Error(`Failed to start capture: ${error.message}`);
@@ -417,29 +436,20 @@ function stopTshark() {
     hcxdumptoolProcess = null;
   }
 
-  // Clean up monitor interface (wlan2mon) if it exists
+  // Clean up wlan2 monitor mode
   try {
-    execSync("sudo ip link show wlan2mon", { stdio: 'ignore' });
-    console.log("Removing wlan2mon interface...");
-    execSync("sudo ip link set wlan2mon down");
-    execSync("sudo iw dev wlan2mon del");
-    console.log("wlan2mon interface removed successfully");
-  } catch (error) {
-    // Interface may not exist, ignore error
-    console.log("wlan2mon interface not found or already removed");
-  }
-
-  // Bring back wlan2 if needed
-  try {
-    execSync("sudo ip link show wlan2", { stdio: 'ignore' });
+    execSync("sudo ip link show wlan2", { stdio: "ignore" });
+    console.log("Cleaning up wlan2 monitor mode...");
+    execSync("sudo ip link set wlan2 down");
+    execSync("sudo iw dev wlan2 set type managed");
     execSync("sudo ip link set wlan2 up");
-    console.log("wlan2 interface brought back up");
+    console.log("wlan2 restored to managed mode");
   } catch (error) {
-    console.log("wlan2 interface not found or already up");
+    console.log("Failed to restore wlan2 to managed mode:", error.message);
   }
 
   resetStats();
-  console.log("hcxdumptool stopped, monitor interface cleaned up and stats reset");
+  console.log("hcxdumptool stopped and wlan2 restored to managed mode");
 }
 
 // Вспомогательная функция для проверки MAC
@@ -472,22 +482,19 @@ function ensureMonitorMode(iface) {
 // Switch to monitor mode
 function switchToMonitorMode(iface = "wlan2") {
   try {
-    const monIface = `${iface}mon`;
-    
-    // Remove existing monitor interface if it exists
     try {
-      execSync(`sudo ip link set ${monIface} down`, { stdio: 'ignore' });
-      execSync(`sudo iw dev ${monIface} del`, { stdio: 'ignore' });
+      execSync(`sudo ip link set ${iface} down`, { stdio: "ignore" });
+      execSync(`sudo iw dev ${iface} del`, { stdio: "ignore" });
     } catch (delError) {
       // Interface may not exist, ignore error
     }
-    
+
     // Create separate monitor interface
-    execSync(`sudo iw dev ${iface} interface add ${monIface} type monitor`);
-    execSync(`sudo ip link set ${monIface} up`);
-    
+    execSync(`sudo iw dev ${iface} interface add ${iface} type monitor`);
+    execSync(`sudo ip link set ${iface} up`);
+
     console.log(`${monIface} monitor interface created from ${iface}`);
-    return { status: "monitor mode enabled", iface: monIface };
+    return { status: "monitor mode enabled", iface };
   } catch (err) {
     console.error(err);
     throw new Error("Failed to enable monitor mode");
@@ -498,10 +505,12 @@ function switchToMonitorMode(iface = "wlan2") {
 function switchToManagedMode(iface = "wlan2") {
   try {
     stopTshark(); // This will clean up wlan2mon interface
-    
+
     // Original interface (wlan2) should already be in managed mode
     // since we never changed it - we only created wlan2mon
-    console.log(`${iface} already in managed mode (monitor interface cleaned up)`);
+    console.log(
+      `${iface} already in managed mode (monitor interface cleaned up)`,
+    );
     return { status: "managed mode restored", iface };
   } catch (err) {
     throw new Error("Failed to restore managed mode");
@@ -542,64 +551,77 @@ function getWlanInterfaces() {
 
 // Save captured handshakes to file
 function saveHandshakes() {
-  const fs = require('fs');
-  const path = require('path');
-  
+  const fs = require("fs");
+  const path = require("path");
+
   if (capturedHandshakes.length === 0 && stats.handshakeCount === 0) {
     return { success: false, message: "No handshakes captured" };
   }
-  
+
   // Create pcapng filename with timestamp and BSSID
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const bssid = currentTarget ? currentTarget.bssid.replace(/:/g, '-') : 'unknown';
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const bssid = currentTarget
+    ? currentTarget.bssid.replace(/:/g, "-")
+    : "unknown";
   const pcapngFile = `handshakes_${bssid}_${timestamp}.pcapng`;
-  const pcapngPath = path.join(process.cwd(), 'captured_handshakes', pcapngFile);
-  
+  const pcapngPath = path.join(
+    process.cwd(),
+    "captured_handshakes",
+    pcapngFile,
+  );
+
   // Ensure directory exists
   const dir = path.dirname(pcapngPath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  
+
   try {
     // Stop current capture
     if (hcxdumptoolProcess) {
       hcxdumptoolProcess.kill("SIGTERM");
       hcxdumptoolProcess = null;
     }
-    
-    console.log('Starting pcapng recording with hcxdumptool for captured handshakes...');
-    
+
+    console.log(
+      "Starting pcapng recording with hcxdumptool for captured handshakes...",
+    );
+
     const { spawn } = require("child_process");
-    const iface = currentTarget ? currentTarget.iface : 'wlan2';
-    
+    const iface = currentTarget ? currentTarget.iface : "wlan2";
+
     // Use hcxdumptool for pcapng recording
     const pcapngCaptureProcess = spawn("sudo", [
       "hcxdumptool",
-      "-i", iface,
-      "-c", currentTarget ? currentTarget.channel.toString() : "11",
-      "-w", pcapngPath,
-      "--rds", "1",
-      "--tot", "1"  // Short capture time (1 minute) to save handshakes
+      "-i",
+      iface,
+      "-c",
+      currentTarget ? currentTarget.channel.toString() : "11",
+      "-w",
+      pcapngPath,
+      "--rds",
+      "1",
+      "--tot",
+      "1", // Short capture time (1 minute) to save handshakes
     ]);
-    
+
     return new Promise((resolve) => {
       let captureComplete = false;
-      
+
       // Wait for capture to complete or timeout
       setTimeout(() => {
         if (!captureComplete) {
           pcapngCaptureProcess.kill("SIGTERM");
           captureComplete = true;
-          
+
           // Check if pcapng file was created
           if (fs.existsSync(pcapngPath)) {
             const stat = fs.statSync(pcapngPath);
-            
+
             // Also save JSON metadata for reference
             const jsonFilename = `handshakes_${bssid}_${timestamp}.json`;
             const jsonFilepath = path.join(dir, jsonFilename);
-            
+
             const jsonData = {
               metadata: {
                 timestamp: new Date().toISOString(),
@@ -610,15 +632,15 @@ function saveHandshakes() {
                 clients: Array.from(stats.clients),
                 pcapngFile: pcapngFile,
                 pcapngSize: stat.size,
-                pcapngCreated: new Date().toISOString()
+                pcapngCreated: new Date().toISOString(),
               },
-              handshakes: capturedHandshakes
+              handshakes: capturedHandshakes,
             };
-            
+
             fs.writeFileSync(jsonFilepath, JSON.stringify(jsonData, null, 2));
-            
-            resolve({ 
-              success: true, 
+
+            resolve({
+              success: true,
               message: `Saved ${stats.handshakeCount} handshakes to ${pcapngFile}`,
               pcapngFile: pcapngFile,
               pcapngPath: pcapngPath,
@@ -626,24 +648,27 @@ function saveHandshakes() {
               jsonPath: jsonFilepath,
               count: stats.handshakeCount,
               detailedCount: capturedHandshakes.length,
-              fileSize: stat.size
+              fileSize: stat.size,
             });
           } else {
-            resolve({ success: false, message: "Failed to create pcapng file" });
+            resolve({
+              success: false,
+              message: "Failed to create pcapng file",
+            });
           }
         }
       }, 30000); // 30 second timeout
-      
-      pcapngCaptureProcess.on('close', (code) => {
+
+      pcapngCaptureProcess.on("close", (code) => {
         if (!captureComplete) {
           captureComplete = true;
-          
+
           if (fs.existsSync(pcapngPath)) {
             const stat = fs.statSync(pcapngPath);
-            
+
             const jsonFilename = `handshakes_${bssid}_${timestamp}.json`;
             const jsonFilepath = path.join(dir, jsonFilename);
-            
+
             const jsonData = {
               metadata: {
                 timestamp: new Date().toISOString(),
@@ -654,15 +679,15 @@ function saveHandshakes() {
                 clients: Array.from(stats.clients),
                 pcapngFile: pcapngFile,
                 pcapngSize: stat.size,
-                pcapngCreated: new Date().toISOString()
+                pcapngCreated: new Date().toISOString(),
               },
-              handshakes: capturedHandshakes
+              handshakes: capturedHandshakes,
             };
-            
+
             fs.writeFileSync(jsonFilepath, JSON.stringify(jsonData, null, 2));
-            
-            resolve({ 
-              success: true, 
+
+            resolve({
+              success: true,
               message: `Saved ${stats.handshakeCount} handshakes to ${pcapngFile}`,
               pcapngFile: pcapngFile,
               pcapngPath: pcapngPath,
@@ -670,17 +695,22 @@ function saveHandshakes() {
               jsonPath: jsonFilepath,
               count: stats.handshakeCount,
               detailedCount: capturedHandshakes.length,
-              fileSize: stat.size
+              fileSize: stat.size,
             });
           } else {
-            resolve({ success: false, message: "Failed to create pcapng file" });
+            resolve({
+              success: false,
+              message: "Failed to create pcapng file",
+            });
           }
         }
       });
     });
-    
   } catch (error) {
-    return { success: false, message: `Error saving handshakes: ${error.message}` };
+    return {
+      success: false,
+      message: `Error saving handshakes: ${error.message}`,
+    };
   }
 }
 
