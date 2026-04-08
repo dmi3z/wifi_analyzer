@@ -222,7 +222,6 @@ function startTsharkWithFilter(targetBSSID) {
       
       packetStats.totalPackets++;
       packetStats.targetPackets++;
-      console.log(`[DEBUG] Packet counted: total=${packetStats.totalPackets}, target=${packetStats.targetPackets}`);
     }
   });
 
@@ -404,171 +403,6 @@ function getWlanInterfaces() {
   }
 }
 
-// Save captured handshakes to file
-function saveHandshakes() {
-  const fs = require("fs");
-  const path = require("path");
-
-  if (capturedHandshakes.length === 0 && stats.handshakeCount === 0) {
-    return { success: false, message: "No handshakes captured" };
-  }
-
-  // Create pcapng filename with timestamp and BSSID
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const bssid = currentTarget
-    ? currentTarget.bssid.replace(/:/g, "-")
-    : "unknown";
-  const pcapngFile = `handshakes_${bssid}_${timestamp}.pcapng`;
-  const pcapngPath = path.join(
-    process.cwd(),
-    "captured_handshakes",
-    pcapngFile,
-  );
-
-  // Ensure directory exists
-  const dir = path.dirname(pcapngPath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-
-  try {
-    // Stop current capture
-    if (hcxdumptoolProcess) {
-      hcxdumptoolProcess.kill("SIGTERM");
-      hcxdumptoolProcess = null;
-    }
-
-    console.log(
-      "Starting pcapng recording with hcxdumptool for captured handshakes...",
-    );
-
-    const { spawn } = require("child_process");
-    const iface = currentTarget ? currentTarget.iface : "wlan2";
-
-    // Use hcxdumptool for pcapng recording
-    const pcapngCaptureProcess = spawn("sudo", [
-      "hcxdumptool",
-      "-i",
-      iface,
-      "-c",
-      currentTarget ? currentTarget.channel.toString() : "11",
-      "-w",
-      pcapngPath,
-      "--rds",
-      "1",
-      "--tot",
-      "1", // Short capture time (1 minute) to save handshakes
-    ]);
-
-    return new Promise((resolve) => {
-      let captureComplete = false;
-
-      // Wait for capture to complete or timeout
-      setTimeout(() => {
-        if (!captureComplete) {
-          pcapngCaptureProcess.kill("SIGTERM");
-          captureComplete = true;
-
-          // Check if pcapng file was created
-          if (fs.existsSync(pcapngPath)) {
-            const stat = fs.statSync(pcapngPath);
-
-            // Also save JSON metadata for reference
-            const jsonFilename = `handshakes_${bssid}_${timestamp}.json`;
-            const jsonFilepath = path.join(dir, jsonFilename);
-
-            const jsonData = {
-              metadata: {
-                timestamp: new Date().toISOString(),
-                target: currentTarget,
-                totalHandshakes: stats.handshakeCount,
-                totalPackets: stats.totalPackets,
-                detailedHandshakes: capturedHandshakes.length,
-                clients: Array.from(stats.clients),
-                pcapngFile: pcapngFile,
-                pcapngSize: stat.size,
-                pcapngCreated: new Date().toISOString(),
-              },
-              handshakes: capturedHandshakes,
-            };
-
-            fs.writeFileSync(jsonFilepath, JSON.stringify(jsonData, null, 2));
-
-            resolve({
-              success: true,
-              message: `Saved ${stats.handshakeCount} handshakes to ${pcapngFile}`,
-              pcapngFile: pcapngFile,
-              pcapngPath: pcapngPath,
-              jsonFile: jsonFilename,
-              jsonPath: jsonFilepath,
-              count: stats.handshakeCount,
-              detailedCount: capturedHandshakes.length,
-              fileSize: stat.size,
-            });
-          } else {
-            resolve({
-              success: false,
-              message: "Failed to create pcapng file",
-            });
-          }
-        }
-      }, 30000); // 30 second timeout
-
-      pcapngCaptureProcess.on("close", (code) => {
-        if (!captureComplete) {
-          captureComplete = true;
-
-          if (fs.existsSync(pcapngPath)) {
-            const stat = fs.statSync(pcapngPath);
-
-            const jsonFilename = `handshakes_${bssid}_${timestamp}.json`;
-            const jsonFilepath = path.join(dir, jsonFilename);
-
-            const jsonData = {
-              metadata: {
-                timestamp: new Date().toISOString(),
-                target: currentTarget,
-                totalHandshakes: stats.handshakeCount,
-                totalPackets: stats.totalPackets,
-                detailedHandshakes: capturedHandshakes.length,
-                clients: Array.from(stats.clients),
-                pcapngFile: pcapngFile,
-                pcapngSize: stat.size,
-                pcapngCreated: new Date().toISOString(),
-              },
-              handshakes: capturedHandshakes,
-            };
-
-            fs.writeFileSync(jsonFilepath, JSON.stringify(jsonData, null, 2));
-
-            resolve({
-              success: true,
-              message: `Saved ${stats.handshakeCount} handshakes to ${pcapngFile}`,
-              pcapngFile: pcapngFile,
-              pcapngPath: pcapngPath,
-              jsonFile: jsonFilename,
-              jsonPath: jsonFilepath,
-              count: stats.handshakeCount,
-              detailedCount: capturedHandshakes.length,
-              fileSize: stat.size,
-            });
-          } else {
-            resolve({
-              success: false,
-              message: "Failed to create pcapng file",
-            });
-          }
-        }
-      });
-    });
-  } catch (error) {
-    return {
-      success: false,
-      message: `Error saving handshakes: ${error.message}`,
-    };
-  }
-}
-
 // Wi-Fi scan endpoint
 async function scanWifi() {
   return new Promise((resolve, reject) => {
@@ -615,7 +449,6 @@ module.exports = {
   stopTshark,
   startTshark,
   ensureMonitorMode,
-  saveHandshakes,
 
   // Global data
   currentTarget,

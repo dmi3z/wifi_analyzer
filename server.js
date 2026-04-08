@@ -6,21 +6,31 @@ const fs = require("fs");
 const bluetooth = require("./bluetooth");
 const wifi = require("./wifi");
 
+let captureProcess = null;
+let currentPcapFile = null;
+let handshakeCount = 0;
+
+// 📁 папка для файлов
+const CAPTURE_DIR = path.join(__dirname, "captures");
+if (!fs.existsSync(CAPTURE_DIR)) {
+  fs.mkdirSync(CAPTURE_DIR);
+}
+
 // Setup wlan2 monitor mode on server start
 try {
   console.log("Setting up wlan2 monitor mode...");
-  
+
   // Add signal handlers for graceful shutdown
-  process.on('SIGINT', () => {
-    console.log('\nReceived SIGINT, shutting down gracefully...');
+  process.on("SIGINT", () => {
+    console.log("\nReceived SIGINT, shutting down gracefully...");
     process.exit(0);
   });
-  
-  process.on('SIGTERM', () => {
-    console.log('\nReceived SIGTERM, shutting down gracefully...');
+
+  process.on("SIGTERM", () => {
+    console.log("\nReceived SIGTERM, shutting down gracefully...");
     process.exit(0);
   });
-  
+
   // Check if wlan2 exists
   try {
     execSync("sudo ip link show wlan2", { stdio: "pipe" });
@@ -28,12 +38,16 @@ try {
   } catch (checkError) {
     console.log("wlan2 interface not found, skipping monitor mode setup");
   }
-  
+
   // Check current mode
   try {
-    const currentMode = execSync("sudo iw dev wlan2 info | grep type", { stdio: "pipe" }).toString().trim();
+    const currentMode = execSync("sudo iw dev wlan2 info | grep type", {
+      stdio: "pipe",
+    })
+      .toString()
+      .trim();
     console.log(`Current wlan2 mode: ${currentMode}`);
-    
+
     if (currentMode.includes("monitor")) {
       console.log("wlan2 already in monitor mode");
     } else {
@@ -53,7 +67,7 @@ try {
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use(express.static('browser'));
+app.use(express.static("browser"));
 
 // Глобальная обработка ошибок
 process.on("uncaughtException", (error) => {
@@ -1415,25 +1429,19 @@ app.get("/wlanconnection", (req, res) => {
   }
 });
 
-
 // Start Wi-Fi capture
 app.post("/wifi/target", (req, res) => {
-
   const { bssid, channel, iface } = req.body;
-  
+
   // Validate required fields
   if (!bssid) {
-    console.log("[DEBUG] BSSID validation failed");
     return res.status(400).json({ error: "BSSID is required" });
   }
-  
+
   if (!channel) {
-    console.log("[DEBUG] Channel validation failed");
     return res.status(400).json({ error: "Channel is required" });
   }
-  
-  console.log("[DEBUG] Validation passed, calling wifi.setTarget");
-  
+
   try {
     const result = wifi.setTarget(bssid, channel, iface || "wlan2");
     res.json(result);
@@ -1453,13 +1461,14 @@ app.get("/wifi/stream", (req, res) => {
 
   const interval = setInterval(() => {
     const stats = wifi.getStats();
-    
+
     res.write(
       `data: ${JSON.stringify({
         pps: stats.pps,
         targetPackets: stats.targetPackets,
         currentTarget: stats.currentTarget,
-        timestamp: stats.timestamp
+        timestamp: stats.timestamp,
+        handshakeCount,
       })}\n\n`,
     );
   }, 1000);
@@ -1475,20 +1484,6 @@ app.post("/wifi/stop-capture", (req, res) => {
   try {
     wifi.stopTshark();
     res.json({ status: "stopped", message: "Wi-Fi capture stopped" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Save captured handshakes
-app.post("/wifi/save-handshakes", (req, res) => {
-  try {
-    const result = wifi.saveHandshakes();
-    if (result.success) {
-      res.json(result);
-    } else {
-      res.status(400).json(result);
-    }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1681,6 +1676,95 @@ app.get("/wifi/connection/devices/:ip", (req, res) => {
       message: error.message,
     });
   }
+});
+
+app.post("/wifi/start-capture-handshakes", (req, res) => {
+  handshakeCount = 0;
+  if (captureProcess) {
+    return res.status(400).json({ error: "Capture already running" });
+  }
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  currentPcapFile = path.join(CAPTURE_DIR, `capture_${timestamp}.pcapng`);
+
+  captureProcess = spawn("sudo", [
+    "hcxdumptool",
+    "-i",
+    "wlan2",
+    "-w",
+    currentPcapFile,
+    "--tot",
+    "120", // защита от зависания (2 минуты)
+  ]);
+
+  captureProcess.stdout.on("data", (data) => {
+    buffer += data.toString();
+
+    let lines = buffer.split("\n");
+    buffer = lines.pop(); // остаток
+
+    for (let line of lines) {
+      if (line.includes("EAPOL")) {
+        handshakeCount++;
+      }
+
+      if (line.includes("PMKID")) {
+        handshakeCount++;
+      }
+    }
+  });
+
+  captureProcess.stderr.on("data", (data) => {
+    console.error("[hcxdumptool error]", data.toString());
+  });
+
+  captureProcess.on("close", (code) => {
+    console.log(`hcxdumptool exited with code ${code}`);
+    captureProcess = null;
+  });
+
+  return res.json({
+    message: "Capture started",
+    file: currentPcapFile,
+  });
+});
+
+//
+// 🛑 STOP CAPTURE + CONVERT
+//
+app.post("/wifi/stop-capture-handshakes", (req, res) => {
+  if (!captureProcess) {
+    return res.status(400).json({ error: "No active capture" });
+  }
+
+  captureProcess.kill("SIGINT"); // корректное завершение
+  captureProcess = null;
+
+  const outputHashFile = currentPcapFile.replace(".pcapng", ".hc22000");
+
+  const convert = spawn("hcxpcapngtool", [
+    "-o",
+    outputHashFile,
+    currentPcapFile,
+  ]);
+
+  convert.stdout.on("data", (data) => {
+    console.log("[hcxpcapngtool]", data.toString());
+  });
+
+  convert.stderr.on("data", (data) => {
+    console.error("[hcxpcapngtool error]", data.toString());
+  });
+
+  convert.on("close", (code) => {
+    console.log(`hcxpcapngtool exited with code ${code}`);
+
+    return res.json({
+      message: "Capture stopped and converted",
+      pcap: currentPcapFile,
+      hashFile: outputHashFile,
+    });
+  });
 });
 
 app.post("/deauth/:bssid", (req, res) => {
