@@ -643,7 +643,6 @@ module.exports = {
   scanWifi,
 
   // Stats and monitoring
-  resetStats,
   stopTshark,
   startTshark,
   ensureMonitorMode,
