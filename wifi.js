@@ -252,17 +252,8 @@ function startTshark(bssid, channel, iface) {
     } catch (checkError) {
       console.log(`${monIface} interface not found, creating it...`);
       
-      // Stop wpa_supplicant on wlan2 to free the interface
-      console.log('Stopping wpa_supplicant on wlan2...');
-      try {
-        execSync(`sudo pkill -f "wpa_supplicant.*${iface}"`, { stdio: 'ignore' });
-        execSync('sleep 1');
-      } catch (wpaError) {
-        console.log('wpa_supplicant may not be running or failed to stop');
-      }
-      
-      // Create monitor interface
-      execSync(`sudo iw dev ${iface} interface add ${monIface} type monitor`);
+      // Create monitor interface (wlan2 is disabled system-wide)
+      execSync(`sudo iw phy phy0 interface add ${monIface} type monitor`);
       execSync(`sudo ip link set ${monIface} up`);
       console.log(`${monIface} interface created successfully`);
     }
@@ -290,7 +281,30 @@ function startTshark(bssid, channel, iface) {
     }
     
     // Set channel on monitor interface
-    execSync(`sudo iw dev ${monIface} set channel ${channel}`);
+    try {
+      // Bring interface down before setting channel to avoid busy error
+      execSync(`sudo ip link set ${monIface} down`);
+      execSync('sleep 1');
+      execSync(`sudo iw dev ${monIface} set channel ${channel}`);
+      execSync(`sudo ip link set ${monIface} up`);
+      console.log(`Channel ${channel} set successfully on ${monIface}`);
+    } catch (channelError) {
+      console.log('Failed to set channel, retrying with interface reset...');
+      try {
+        // Reset interface completely
+        execSync(`sudo ip link set ${monIface} down`);
+        execSync('sleep 2');
+        execSync(`sudo iw dev ${monIface} del`);
+        execSync('sleep 1');
+        execSync(`sudo iw dev ${iface} interface add ${monIface} type monitor`);
+        execSync(`sudo ip link set ${monIface} up`);
+        execSync('sleep 1');
+        execSync(`sudo iw dev ${monIface} set channel ${channel}`);
+        console.log(`Channel ${channel} set successfully after interface reset`);
+      } catch (retryError) {
+        throw new Error(`Failed to set channel ${channel} on ${monIface}: ${retryError.message}`);
+      }
+    }
     
     // Verify final interface state
     const finalModeCheck = execSync(`sudo iw dev ${monIface} info | grep type`).toString();
@@ -415,18 +429,8 @@ function stopTshark() {
     console.log("wlan2mon interface not found or already removed");
   }
 
-  // Restart wpa_supplicant on wlan2 to restore network connectivity
-  try {
-    console.log("Restarting wpa_supplicant on wlan2...");
-    execSync("sudo wpa_supplicant -B -c/etc/wpa_supplicant/wpa_supplicant.conf -iwlan2", { stdio: 'ignore' });
-    execSync("sleep 2");
-    console.log("wpa_supplicant restarted on wlan2");
-  } catch (wpaError) {
-    console.log("Failed to restart wpa_supplicant:", wpaError.message);
-  }
-
   resetStats();
-  console.log("hcxdumptool stopped, monitor interface cleaned up, wpa_supplicant restarted and stats reset");
+  console.log("hcxdumptool stopped, monitor interface cleaned up and stats reset");
 }
 
 // Вспомогательная функция для проверки MAC
