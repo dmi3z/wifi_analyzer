@@ -1769,12 +1769,9 @@ app.post("/wifi/stop-capture-handshakes", (req, res) => {
 });
 
 app.post("/deauth/:bssid", (req, res) => {
-  const { bssid, station } = req.params;
+  const { bssid } = req.params;
 
   let cmd = `sudo aireplay-ng -0 10 -a ${bssid} wlan2`;
-  if (station && station !== "null") {
-    cmd += ` -c ${station}`;
-  }
 
   exec(cmd, (error, stdout, stderr) => {
     if (error) {
