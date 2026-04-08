@@ -650,11 +650,10 @@ module.exports = {
 
   // Global data
   currentTarget,
-  stats,
+  packetStats,
   tsharkProcess,
-  capturedHandshakes,
 
   // Accessors for global data
   getCurrentTarget: () => currentTarget,
-  getStats: () => stats,
+  getStats: () => packetStats,
 };
