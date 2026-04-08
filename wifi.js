@@ -275,12 +275,13 @@ function setTarget(bssid, channel, iface) {
   
   console.log(`[DEBUG] currentTarget set to: ${JSON.stringify(currentTarget)}`);
   
-  // Start tshark with specific BSSID filter
-  console.log(`[DEBUG] About to call startTsharkWithFilter`);
-  startTsharkWithFilter(bssid);
-  console.log(`[DEBUG] startTsharkWithFilter returned`);
+  // Start tshark asynchronously to avoid blocking
+  console.log(`[DEBUG] About to call startTsharkWithFilter asynchronously`);
+  setTimeout(() => {
+    startTsharkWithFilter(bssid);
+  }, 0);
   
-  console.log(`[DEBUG] setTarget completed, returning response`);
+  console.log(`[DEBUG] setTarget completed, returning response immediately`);
   return { status: "target set", target: currentTarget };
 }
 
